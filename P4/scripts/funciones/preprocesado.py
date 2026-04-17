@@ -57,3 +57,33 @@ def representar_boxplots(df, nome_etiquetas, titulo):
 
     plt.tight_layout()
     plt.show()
+    
+def seleccion_de_variables(X_encoded: pd.DataFrame, y: pd.Series, n: int) -> list[str]:
+    """
+    Calcula a correlación de cada variable co target e devolve as n con maior
+    correlación absoluta.
+ 
+    Parámetros
+    ----------
+    X_encoded : DataFrame con todas as variables (xa codificadas).
+    y         : Serie co target.
+    n         : Número de variables a seleccionar.
+ 
+    Devolve
+    -------
+    Lista de n nomes de columnas ordenadas de maior a menor correlación.
+    """
+    df_corr = X_encoded.copy()
+    df_corr['_target_'] = y.values
+ 
+    correlacions = df_corr.corr()['_target_'].abs().sort_values(ascending=False)
+ 
+    # O índice 0 é a correlación do target consigo mesmo (1.0), saltámolo
+    features = correlacions.index[1:n + 1].tolist()
+ 
+    print(f"--- TOP {n} Variables ---")
+    for feat in features:
+        print(f"  · {feat}  (corr: {correlacions[feat]:.4f})")
+    print("-" * 35 + "\n")
+ 
+    return features
