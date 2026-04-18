@@ -3,11 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 
-df_train = pd.read_csv("data/train.csv")
-
-print(df_train.head())
-print(df_train.shape)
-
 def representar_boxplots(df, nome_etiquetas, titulo):
     # Filtramos para quedarnos unicamente cas variables numéricas
     df_numerico = df.select_dtypes(include=['number'])
@@ -87,3 +82,57 @@ def seleccion_de_variables(X_encoded: pd.DataFrame, y: pd.Series, n: int) -> lis
     print("-" * 35 + "\n")
  
     return features
+
+def preprocesar_datos(train: pd.DataFrame, test: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
+    """
+    Preprocesa os datos de adestramento e test realizando os seguintes pasos:
+    1. Separa a variable obxectivo (Target_Risco).
+    2. Elimina as columnas non útiles ou problemáticas (ID_Cliente, Data_Solicitude).
+    3. Aplica One-Hot Encoding ás variables categóricas de texto.
+    4. Aliña os datasets para garantir que test ten as mesmas columnas ca train.
+    5. Imputa os valores nulos coa mediana do adestramento.
+    
+    Parámetros
+    ----------
+    train : DataFrame cos datos de adestramento orixinais.
+    test  : DataFrame cos datos de test orixinais.
+    
+    Devolve
+    -------
+    X_train_aligned : DataFrame de adestramento preprocesado.
+    X_test_aligned  : DataFrame de test preprocesado.
+    y_train         : Serie coa variable obxectivo.
+    """
+    print("Iniciando preprocesado...")
+    
+    # 1. Separar o target
+    y_train = train['Target_Risco'].copy()
+    
+    # 2. Eliminar columnas que non aportan ou xeran ruído
+    cols_a_borrar_train = ['ID_Cliente', 'Target_Risco', 'Data_Solicitude']
+    cols_a_borrar_test = ['ID_Cliente', 'Data_Solicitude']
+    
+    X_train_raw = train.drop(columns=[col for col in cols_a_borrar_train if col in train.columns], errors='ignore')
+    X_test_raw = test.drop(columns=[col for col in cols_a_borrar_test if col in test.columns], errors='ignore')
+    
+    # 3. One-Hot Encoding
+    X_train_encoded = pd.get_dummies(X_train_raw)
+    X_test_encoded = pd.get_dummies(X_test_raw)
+    
+    # 4. Aliñamento para evitar diferenzas nas variables categóricas
+    X_train_aligned, X_test_aligned = X_train_encoded.align(X_test_encoded, join='left', axis=1, fill_value=0)
+    
+    # 5. Imputación de nulos coa mediana
+    for col in X_train_aligned.columns:
+        mediana = X_train_aligned[col].median()
+        X_train_aligned[col] = X_train_aligned[col].fillna(mediana)
+        X_test_aligned[col]  = X_test_aligned[col].fillna(mediana)
+        
+    print(f"Preprocesado rematado. Variables finais: {X_train_aligned.shape[1]}")
+    return X_train_aligned, X_test_aligned, y_train
+
+if __name__ == "__main__":
+    df_train = pd.read_csv("data/train.csv")
+    print(df_train.head())
+    print(df_train.shape)
+    representar_boxplots(df_train, 'Target_Risco', 'Boxplots das variables numéricas e histograma do risco')
