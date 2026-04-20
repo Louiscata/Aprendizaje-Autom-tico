@@ -43,7 +43,7 @@ rf_base = RandomForestClassifier(
 # 4.2 Creamos o comité secuencial de Boosting
 model = AdaBoostClassifier(
     estimator=rf_base,           # O modelo que se vai a repetir
-    n_estimators=10,             # Os 10 modelos secuenciais que pediches
+    n_estimators=10,             
     learning_rate=0.5,           # Ritmo de aprendizaxe suave
     random_state=SEED
 )
