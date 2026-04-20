@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 # ── 0. Variables globais ──────────────────────────────────────────────────────
 
 SEED          = 42
-NUM_FEATURES  = 15
+NUM_FEATURES  = 10
 CV            = 5
 
 ELIMINAR_OUTLIERS = False
@@ -92,7 +92,7 @@ stacking_clf, preds = adestrar_por_stacking(
 )
 
 # ── 6. Arquivo de envío ───────────────────────────────────────────────────────
-nome_arquivo = f'./resultados/20-04-2026_3_stacking-n{NUM_FEATURES}.csv'
+nome_arquivo = f'./resultados/21-04-2026_3_stacking-n{NUM_FEATURES}.csv'
 
 submission = pd.DataFrame({
     'ID_Cliente':   test['ID_Cliente'],

@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 
 # ── 0. Variables globais ──────────────────────────────────────────────────────
 SEED          = 42
-NUM_FEATURES  = 12
+NUM_FEATURES  = 15
 TEST_SIZE     = 0.20
 
 ELIMINAR_OUTLIERS = True
@@ -93,7 +93,7 @@ blending_clf, preds = adestrar_por_blending(
 )
 
 # ── 6. Arquivo de envío ───────────────────────────────────────────────────────
-nome_arquivo = f'./resultados/20-04-2026_2_blending_n{NUM_FEATURES}.csv'
+nome_arquivo = f'./resultados/21-04-2026_2_blending_n{NUM_FEATURES}.csv'
 
 submission = pd.DataFrame({
     'ID_Cliente':   test['ID_Cliente'],

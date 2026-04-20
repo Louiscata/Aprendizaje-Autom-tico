@@ -10,19 +10,19 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
+# ── Importamos as funcións do noso módulo ────────────────────────────────────
 from funciones.preprocesado import preprocesar_datos, seleccion_de_variables
-from funciones.modelado import adestrar_por_stacking
+from funciones.modelado import adestrar_por_blending
 
 import warnings
 warnings.filterwarnings('ignore')
 
 # ── 0. Variables globais ──────────────────────────────────────────────────────
-
 SEED          = 42
-NUM_FEATURES  = 15
-CV            = 5
+NUM_FEATURES  = 10
+TEST_SIZE     = 0.20
 
-ELIMINAR_OUTLIERS = False
+ELIMINAR_OUTLIERS = True
 NORMALIZAR        = True
 UMBRAL_NAN        = 10
 
@@ -79,20 +79,21 @@ modelos_base = [
     )),
 ]
 
-meta_modelo = LogisticRegression(max_iter=1000, random_state=SEED)
+meta_modelo = LogisticRegression(max_iter=1000, random_state=SEED, class_weight='balanced')
 
-# ── 5. Adestramento por stacking ─────────────────────────────────────────────
-stacking_clf, preds = adestrar_por_stacking(
+# ── 5. Adestramento por Blending ─────────────────────────────────────────────
+blending_clf, preds = adestrar_por_blending(
     modelos_base=modelos_base,
     X_train=X_train,
     y_train=y_train,
     X_test=X_test,
     meta_modelo=meta_modelo,
-    cv=CV,
+    test_size=TEST_SIZE,
+    seed=SEED
 )
 
 # ── 6. Arquivo de envío ───────────────────────────────────────────────────────
-nome_arquivo = f'./resultados/20-04-2026_1_stacking-n{NUM_FEATURES}.csv'
+nome_arquivo = f'./resultados/21-04-2026_4_blending_n{NUM_FEATURES}.csv'
 
 submission = pd.DataFrame({
     'ID_Cliente':   test['ID_Cliente'],
