@@ -60,7 +60,7 @@ boosting_clf, preds = adestrar_por_boosting(
 )
 
 # ── 6. Arquivo de envío ──────────────────────────────────────────────────────
-nome_arquivo = f'./resultados/20-04-2026_1_boosting{TIPO}-features{N}.csv'
+nome_arquivo = f'./resultados/20-04-2026_1_boosting-{TIPO}_features{N}.csv'
 
 submission = pd.DataFrame({
     'ID_Cliente':   test['ID_Cliente'],

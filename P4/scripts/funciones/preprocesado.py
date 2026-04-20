@@ -168,7 +168,7 @@ def preprocesar_datos(
     y_train = train['Target_Risco'].copy()
 
     # ── Paso 6: Eliminar columnas non útiles ──────────────────────────────────
-    cols_drop_train = ['ID_Cliente']
+    cols_drop_train = ['ID_Cliente', 'Target_Risco']
     cols_drop_test  = ['ID_Cliente']
 
     X_train_raw = train.drop(columns=[c for c in cols_drop_train if c in train.columns])
