@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.ensemble import (
-    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
     ExtraTreesClassifier,
 )
 from sklearn.linear_model import LogisticRegression
@@ -18,13 +18,14 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ── 0. Variables globais ──────────────────────────────────────────────────────
-SEED          = 42
-NUM_FEATURES  = 15
-TEST_SIZE     = 0.20
+SEED            = 42
+NUM_FEATURES    = 15
+TEST_SIZE       = 0.20
 
-ELIMINAR_OUTLIERS = True
-NORMALIZAR        = True
-UMBRAL_NAN        = 10
+OUTLIERS        = 'capear'  # Novo aqui
+NORMALIZAR      = True
+UMBRAL_NAN      = 10
+TRANSFORMAR_LOG = True      # Novo aqui
 
 # ── 1. Cargar datos ───────────────────────────────────────────────────────────
 train = pd.read_csv('./data/train.csv')
@@ -34,9 +35,10 @@ test  = pd.read_csv('./data/test.csv')
 X_train_full, X_test_full, y_train = preprocesar_datos(
     train,
     test,
-    eliminar_outliers=ELIMINAR_OUTLIERS,
+    outliers=OUTLIERS,
     umbral_nan=UMBRAL_NAN,
     normalizar=NORMALIZAR,
+    trans_log=TRANSFORMAR_LOG,
 )
 
 # ── 3. Selección das mellores variables ───────────────────────────────────────
@@ -54,11 +56,11 @@ modelos_base = [
         random_state=SEED,
         n_jobs=-1,
     )),
-    ('gradient_boosting', GradientBoostingClassifier(
-        n_estimators=150,
+    ('hist_gradient_boosting', HistGradientBoostingClassifier(
+        max_iter=150,
         max_depth=4,
         learning_rate=0.05,
-        subsample=0.8,
+        class_weight='balanced',
         random_state=SEED,
     )),
     ('svc', SVC(
@@ -81,7 +83,7 @@ modelos_base = [
 
 meta_modelo = LogisticRegression(max_iter=1000, random_state=SEED, class_weight='balanced')
 
-# ── 5. Adestramento por Blending ─────────────────────────────────────────────
+# ── 5. Adestramento por Blending con Probabilidades ──────────────────────────
 blending_clf, preds = adestrar_por_blending(
     modelos_base=modelos_base,
     X_train=X_train,
@@ -89,15 +91,16 @@ blending_clf, preds = adestrar_por_blending(
     X_test=X_test,
     meta_modelo=meta_modelo,
     test_size=TEST_SIZE,
+    passthrough=True,  # O meta-modelo recibe Probabilidades + Variables orixinais
     seed=SEED
 )
 
 # ── 6. Arquivo de envío ───────────────────────────────────────────────────────
-nome_arquivo = f'./resultados/22-04-2026_1_blending_n{NUM_FEATURES}.csv'
+nome_arquivo = f'./resultados/21-04-2026_4_blending_n{NUM_FEATURES}.csv'
 
 submission = pd.DataFrame({
     'ID_Cliente':   test['ID_Cliente'],
-    'Target_Risco': np.round(preds).astype(int),
+    'Target_Risco': preds.astype(int),
 })
 submission.to_csv(nome_arquivo, index=False)
 print(f"\nArquivo xerado con éxito: {nome_arquivo} ({len(submission)} filas)")

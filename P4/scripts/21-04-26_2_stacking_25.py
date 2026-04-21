@@ -35,7 +35,7 @@ SEED          = 42
 NUM_FEATURES  = 25    # aumentado: MI + feature eng. engade variables útiles
 CV            = 5
 
-ELIMINAR_OUTLIERS = False
+ELIMINAR_OUTLIERS = None
 NORMALIZAR        = True
 UMBRAL_NAN        = 10
 
@@ -49,7 +49,7 @@ test  = pd.read_csv('./data/test.csv')
 X_train_full, X_test_full, y_train = preprocesar_datos(
     train,
     test,
-    eliminar_outliers=ELIMINAR_OUTLIERS,
+    outliers=ELIMINAR_OUTLIERS,
     umbral_nan=UMBRAL_NAN,
     normalizar=NORMALIZAR,
 )

@@ -24,7 +24,7 @@ test  = pd.read_csv('./data/test.csv')
 X_train_encoded, X_test_encoded, y_train = preprocesar_datos(
     train=train,
     test=test,
-    eliminar_outliers=False,
+    outliers=None,
     umbral_nan=10,
     normalizar=True,
 )

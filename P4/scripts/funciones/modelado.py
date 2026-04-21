@@ -260,38 +260,21 @@ def adestrar_por_blending(
     X_test: pd.DataFrame,
     meta_modelo=None,
     test_size: float = 0.2,
+    passthrough: bool = True,
     seed: int = 42,
 ) -> tuple[object, np.ndarray]:
     """
-    Adestra un conxunto de modelos base e un meta-modelo mediante blending.
-
-    Pasos:
-      1. Divide o adestramento nun base_train_data e un holdout_set.
-      2. Adestra os modelos base no base_train_data e xera predicións.
-      3. Adestra o meta-modelo coas variables orixinais + as predicións base.
-      4. Predí sobre test usando as variables orixinais + as predicións base.
-
-    Parámetros
-    ----------
-    modelos_base : Lista de tuplas (nome, estimador) compatibles con sklearn.
-    X_train      : Features de adestramento.
-    y_train      : Target de adestramento.
-    X_test       : Features de test.
-    meta_modelo  : Estimador para combinar as saídas dos modelos base.
-    test_size    : Proporción do conxunto de adestramento usada para o holdout.
-    seed         : Semente para reproducibilidade.
-
-    Devolve
-    -------
-    meta_modelo : O meta-modelo xa adestrado.
-    preds_test  : Array coas predicións finais sobre X_test.
+    Adestra un conxunto de modelos base e un meta-modelo mediante blending,
+    utilizando PROBABILIDADES (predict_proba) no canto de predicións duras.
     """
     if meta_modelo is None:
         meta_modelo = LogisticRegression(
+            max_iter=1000,
             random_state=seed,
             class_weight='balanced',
         )
 
+    # 1. Partición Holdout
     X_base, X_holdout, y_base, y_holdout = train_test_split(
         X_train, y_train,
         test_size=test_size,
@@ -299,26 +282,51 @@ def adestrar_por_blending(
         stratify=y_train,
     )
 
-    meta_features_holdout = np.zeros((X_holdout.shape[0], len(modelos_base)))
-    meta_features_test    = np.zeros((X_test.shape[0],    len(modelos_base)))
+    meta_features_holdout = []
+    meta_features_test = []
 
+    # 2. Adestramento dos modelos base e extracción de probabilidades
     for i, (nome, modelo) in enumerate(modelos_base):
-        print(f"   -> Adestrando co modelo {nome}")
+        print(f"Adestrando co modelo {nome}")
         modelo.fit(X_base, y_base)
-        meta_features_holdout[:, i] = modelo.predict(X_holdout)
-        meta_features_test[:, i]    = modelo.predict(X_test)
+        
+        # Usamos predict_proba. Isto devolve unha matriz de (N_mostras, 4 clases)
+        probabilidades_holdout = modelo.predict_proba(X_holdout)
+        probabilidades_test = modelo.predict_proba(X_test)
+        
+        meta_features_holdout.append(probabilidades_holdout)
+        meta_features_test.append(probabilidades_test)
 
-    X_holdout_arr = X_holdout.values if isinstance(X_holdout, pd.DataFrame) else X_holdout
-    X_test_arr    = X_test.values    if isinstance(X_test,    pd.DataFrame) else X_test
+    # Xuntamos todas as matrices de probabilidades en horizontal
+    meta_features_holdout = np.hstack(meta_features_holdout)
+    meta_features_test = np.hstack(meta_features_test)
 
-    X_holdout_meta = np.hstack((X_holdout_arr, meta_features_holdout))
-    X_test_meta    = np.hstack((X_test_arr,    meta_features_test))
+    # 3. Preparación do dataset final para o meta-modelo
+    if passthrough:
+        # Engadimos as features orixinais ás probabilidades
+        X_holdout_arr = X_holdout.values if isinstance(X_holdout, pd.DataFrame) else X_holdout
+        X_test_arr    = X_test.values    if isinstance(X_test,    pd.DataFrame) else X_test
+        
+        X_holdout_meta = np.hstack((X_holdout_arr, meta_features_holdout))
+        X_test_meta    = np.hstack((X_test_arr,    meta_features_test))
+    else:
+        # O meta-modelo só ve as probabilidades
+        X_holdout_meta = meta_features_holdout
+        X_test_meta    = meta_features_test
 
+    # 4. Adestramento do meta-modelo e avaliación
+    print("Adestrando o meta-modelo")
     meta_modelo.fit(X_holdout_meta, y_holdout)
 
     preds_holdout_meta = meta_modelo.predict(X_holdout_meta)
     f1_holdout = f1_score(y_holdout, preds_holdout_meta, average='macro')
-    print(f"   -> F1-Macro do meta-modelo no Holdout: {f1_holdout:.4f}")
+    print(f"F1-Macro do meta-modelo no Holdout: {f1_holdout:.4f}")
 
+    # Reporte por clase no Holdout
+    f1_por_clase = f1_score(y_holdout, preds_holdout_meta, average=None)
+    for i, f1 in enumerate(f1_por_clase):
+        print(f"\t· Clase {i}: F1 = {f1:.4f}")
+
+    # 5. Predicións finais
     preds_test = meta_modelo.predict(X_test_meta)
     return meta_modelo, preds_test

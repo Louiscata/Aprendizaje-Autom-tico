@@ -50,6 +50,17 @@ _COLS_OUTLIERS = [
     'Indice_Estres_Financeiro',
 ]
 
+# Variables que ao velas no histograma teñen unha gran acumulación próxima ao cero e unha longa cola cara a dereita, o que suxire que unha transformación logarítmica pode mellorar a súa distribución e a súa relación co obxectivo.
+
+_COLS_TRANSFORMACION_LOG = [
+    'Ingresos_Anuais',
+    'Patrimonio_Total',
+    'Debeda_Total',
+    'Limite_Credito_Total',
+    'Saldo_Medio_3M',
+    'Cota_Mensual_Prestamos'
+]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Función de selección de variables  [FIX] Pearson → Mutual Information
@@ -162,9 +173,10 @@ def preprocesar_datos(
     train: pd.DataFrame,
     test: pd.DataFrame,
     umbral_nan: int = 10,
-    eliminar_outliers: bool = True,
+    outliers: str = None, # 'eliminar' ou 'capear'
     imputar_nan_test: bool = True,
     normalizar: bool = True,
+    trans_log: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
     """
     Preprocesa os datos de adestramento e test.
@@ -199,12 +211,14 @@ def preprocesar_datos(
     train = train.copy()
     test  = test.copy()
 
-    # ── Pasos 1-4: limpeza só sobre train ────────────────────────────────────
+    # ── Pasos 1-4: limpeza xeral ────────────────────────────────────
     train = _eliminar_duplicados(train)
     train = _eliminar_imposibles(train)
 
-    if eliminar_outliers:
+    if outliers == 'eliminar':
         train, _ = _eliminar_outliers_iqr(train)
+    elif outliers == 'capear':
+        train, test = _capear_outliers_iqr(train, test)
     else:
         print("[Paso 3] Detección de outliers desactivada.\n")
 
@@ -251,11 +265,20 @@ def preprocesar_datos(
         X_test_encoded, join='left', axis=1, fill_value=0
     )
 
-    # ── Paso 11: Normalización cos parámetros de train ────────────────────────
+    # ── Paso 11: Transformación logarítmica ─────────────────────────────────
+    if trans_log:
+        X_train_aligned, n_trans = _aplicar_transformacion_log(X_train_aligned, _COLS_TRANSFORMACION_LOG)
+        X_test_aligned, _        = _aplicar_transformacion_log(X_test_aligned, _COLS_TRANSFORMACION_LOG)
+        if n_trans > 0:
+            print(f"  · {n_trans} variables transformadas para suavizar a distribución.\n")
+        else:
+            print(f"  · Ningunha variable a transformar.\n")
+
+    # ── Paso 12: Normalización cos parámetros de train ────────────────────────
     if normalizar:
         X_train_aligned, X_test_aligned = _normalizar(X_train_aligned, X_test_aligned)
     else:
-        print("[Paso 11] Normalización desactivada.\n")
+        print("[Paso 12] Normalización desactivada.\n")
 
     print(f"{'=' * 60}")
     print(f"  Preprocesado rematado.")
@@ -345,6 +368,38 @@ def _eliminar_outliers_iqr(
     print(f"  · {total_celdas_nan} outliers → NaN en {len(filas_afectadas)} filas\n")
     return train, limites
 
+# En vez de eliminar a un que teña ingresos multimillonarios, deixalo nun límite superior razonable.
+def _capear_outliers_iqr(
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    factor: float = 3.0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Capa (winsorize) os outliers en train e test usando os límites de train."""
+    print(f"[Paso 3] Capeando outliers (Winsorización) con IQR · {factor}...")
+    
+    train_capeado = train.copy()
+    test_capeado = test.copy()
+    n_capeados = 0
+
+    for col in _COLS_OUTLIERS:
+        if col not in train.columns:
+            continue
+        
+        q1  = train[col].quantile(0.25)
+        q3  = train[col].quantile(0.75)
+        iqr = q3 - q1
+        lo, hi = q1 - factor * iqr, q3 + factor * iqr
+
+        # Clip limita os valores por abaixo (lo) e por arriba (hi)
+        train_capeado[col] = train_capeado[col].clip(lower=lo, upper=hi)
+        
+        if col in test_capeado.columns:
+            test_capeado[col] = test_capeado[col].clip(lower=lo, upper=hi)
+            
+        n_capeados += 1
+
+    print(f"  · {n_capeados} variables capeadas aos límites razoables.\n")
+    return train_capeado, test_capeado
 
 def _xestionar_nans_train(
     train: pd.DataFrame,
@@ -399,6 +454,21 @@ def _normalizar(
 
     print(f"  · {n_normalizadas} variables normalizadas · {len(cols_onehot)} OHE omitidas\n")
     return X_train_norm, X_test_norm
+
+def _aplicar_transformacion_log(df: pd.DataFrame, columnas_log: list) -> tuple[pd.DataFrame, int]:
+    """
+    Aplica a transformación matemática np.log1p ás columnas indicadas para reducir o sesgo de variables con "colas longas" (normalmente monetarias).
+    """
+    df_trans = df.copy()
+    n_transformadas = 0
+    
+    for col in columnas_log:
+        if col in df_trans.columns:
+            # clip(lower=0) garante que non entren valores negativos que rompan o logaritmo
+            df_trans[col] = np.log1p(df_trans[col].clip(lower=0))
+            n_transformadas += 1
+            
+    return df_trans, n_transformadas
 
 
 # ─────────────────────────────────────────────────────────────────────────────

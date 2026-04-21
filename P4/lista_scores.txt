@@ -1,0 +1,29 @@
+Valores de F1 score en el 30% del test de Kaggle
+
+MLP sin preprocesado ni validación, 5 características - 0.6978
+Árbol de decisión sin preprocesado ni validación, 5 características - 0.6337
+MLP sin preprocesado ni validación, 10 características - 0.7107
+MLP sin preprocesado ni validación, todas las 28 características - 0.6730
+Random forest sin preprocesado, 10 características - 0.7171
+Random forest sin preprocesado, 7 características - 0.6698
+Random forest sin preprocesado, 15 características - 0.7678
+Random forest sin preprocesado, 7 características - 0.7645
+Stacking de 4 classifiers: un random forest, un gradient boosting, un MLP y un KNN. Con validación cruzada y las 20 características con más correlación. - 0.7854
+Stacking de 6 modelos (randomforest, extratrees, gradboost, svc, mpl, knn), con validación cruzada y las 18 variables con mayor correlación. - 0.7872
+Stacking de 6 modelos, con validación cruzada y las 15 variables con mayor correlación. - 0.7846
+Adaboost de 10 random forests con 10 variables - 0.7183
+Gradient boosting con todas las variables, sin preprocesado - 0.7791
+
+Introducción de preprocesado v1
+
+Boosting de tipo gradiente con preprocesado (normalización, eliminación de outliers, imposibles, duplicados y NaN) y validación cruzada. 15 variables - 0.7012
+Bagging con preprocesado (normalización, eliminación de outliers, imposibles, duplicados y NaN) y validación cruzada. 15 variables - 0.6913
+Boosting de tipo gradiente con preprocesado (normalización, conservación de outliers, imposibles, duplicados y NaN) y validación cruzada. 15 variables - 0.7692
+Bagging con preprocesado (normalización, conservación de outliers, imposibles, duplicados y NaN) y validación cruzada. 15 variables - 0.7730
+Stacking con preprocesado (sin eliminar outliers) y 10 variables. - 0.7228
+Stacking con preprocesado (sin eliminar outliers) y 15 variables. - 0.7809
+
+Preprocesado v2
+
+Stacking con función de preprocesado v2, con selección de variables por Mutual Information en vez de correlación, con modelos LGBM y XGB (además de otros) en el stacking y con passthrough de las entradas. - 0.7703
+Blending con logaritmo e clamping de outliers - 0.7564
