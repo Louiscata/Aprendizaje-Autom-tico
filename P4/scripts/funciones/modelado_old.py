@@ -1,20 +1,16 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.ensemble import (
-    RandomForestClassifier, GradientBoostingClassifier,
-    StackingClassifier, AdaBoostClassifier, BaggingClassifier,
-)
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, StackingClassifier, AdaBoostClassifier, BaggingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import cross_val_score
 from sklearn.metrics import f1_score
 
 import warnings
 warnings.filterwarnings('ignore')
-
 
 def adestrar_por_stacking(
     modelos_base: list,
@@ -22,9 +18,8 @@ def adestrar_por_stacking(
     y_train: pd.Series,
     X_test: pd.DataFrame,
     meta_modelo=None,
-    cv: int = 5,
-    passthrough: bool = True,
-    seed: int = 42,
+    cv: int=5,
+    seed=42
 ) -> tuple[object, np.ndarray]:
     """
     Adestra un conxunto de modelos base e un meta-modelo mediante stacking.
@@ -35,19 +30,7 @@ def adestrar_por_stacking(
       2. O meta-modelo adéstrase sobre ese dataset de meta-features.
       3. Para predicir en test, cada modelo base predí sobre X_test e o
          meta-modelo combina esas predicións.
-
-    Melloras respecto á versión anterior
-    -------------------------------------
-    · passthrough=True por defecto: o meta-modelo recibe tanto as saídas dos
-      modelos base coma as features orixinais, o que lle permite correxir
-      erros sistemáticos dos modelos base.
-    · Meta-modelo con class_weight='balanced': evita que ignore as clases
-      minoritarias (especialmente a clase 3, con só o 5% dos datos).
-    · StratifiedKFold explícito no CV: garante que cada fold ten representación
-      proporcional de todas as clases. Crítico con targets moi desbalanceados.
-    · Reporte por clase no CV final: mostra o F1 de cada clase para detectar
-      se o modelo segue ignorando as clases minoritarias.
-
+ 
     Parámetros
     ----------
     modelos_base : Lista de tuplas (nome, estimador) compatibles con sklearn.
@@ -55,78 +38,46 @@ def adestrar_por_stacking(
     y_train      : Target de adestramento.
     X_test       : Features de test.
     meta_modelo  : Estimador para combinar as saídas dos modelos base.
-                   Por defecto: LogisticRegression con class_weight='balanced'.
+                   Por defecto úsase LogisticRegression.
     cv           : Número de folds para a validación cruzada interna.
-    passthrough  : Se True, o meta-modelo recibe tamén as features orixinais.
-                   Recomendado: True.
-    seed         : Semente para reproducibilidade.
-
+ 
     Devolve
     -------
     stacking_clf : O StackingClassifier xa adestrado.
     preds_test   : Array coas predicións finais sobre X_test.
     """
-    # [FIX] Meta-modelo con class_weight='balanced' para non ignorar clases
-    # minoritarias. A versión anterior usaba LogisticRegression sen este
-    # parámetro, o que penalizaba sistematicamente as clases 2 e 3.
     if meta_modelo is None:
-        meta_modelo = LogisticRegression(
-            max_iter=1000,
-            class_weight='balanced',
-            random_state=seed,
-        )
-
-    # [FIX] passthrough=True: o meta-modelo ve as features orixinais ademais
-    # das predicións dos modelos base. Permite correxir casos onde todos os
-    # base models se equivocan no mesmo sentido.
+        meta_modelo = LogisticRegression(max_iter=1000, random_state=seed)
+ 
     stacking_clf = StackingClassifier(
         estimators=modelos_base,
         final_estimator=meta_modelo,
         cv=cv,
-        stack_method='predict_proba',
+        stack_method='predict_proba',   # usa probabilidades como meta-features
         n_jobs=-1,
-        passthrough=passthrough,
+        passthrough=False,              # só pasan as saídas dos base, non X orixinal
     )
-
-    # [FIX] StratifiedKFold explícito: garante representación de todas as
-    # clases en cada fold. Especialmente importante para a clase 3 (5% dos
-    # datos), que con un KFold aleatorio podería non aparecer nalgún fold.
-    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed)
-
+ 
     # ── Validación cruzada do pipeline completo ──────────────────────────────
-    print("Executando validación cruzada do stacking...")
-    cv_scores = cross_val_score(
-        stacking_clf, X_train, y_train,
-        cv=skf,
-        scoring='f1_macro',
-        n_jobs=1,   # evitar conflito de paralelismo co n_jobs=-1 interno
-    )
-    print(f"  CV F1-Macro: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
-    print(f"  Por fold:   {np.round(cv_scores, 4)}\n")
-
+    print("Executando validación cruzada do stacking")
+    cv_scores = cross_val_score(stacking_clf, X_train, y_train, cv=cv, scoring='f1_macro')
+    print(f"CV F1-Macro (Stacking): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n")
+ 
     # ── Adestramento final sobre todos os datos de train ─────────────────────
-    print("Adestramento final do stacking...")
+    print("Adestramento final do stacking")
     stacking_clf.fit(X_train, y_train)
-
+ 
     preds_train = stacking_clf.predict(X_train)
     f1_train = f1_score(y_train, preds_train, average='macro')
-    print(f"  Train F1-Macro: {f1_train:.4f}")
-
-    # Reporte por clase para detectar se aínda se ignoran clases minoritarias
-    f1_por_clase = f1_score(y_train, preds_train, average=None)
-    for i, f1 in enumerate(f1_por_clase):
-        print(f"    · Clase {i}: F1 = {f1:.4f}")
-    print()
-
+    print(f"Train F1-Macro: {f1_train:.4f}\n")
+ 
     # ── Predicións sobre test ─────────────────────────────────────────────────
     preds_test = stacking_clf.predict(X_test)
-
+ 
     return stacking_clf, preds_test
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Resto de funcións de modelado (sen cambios relevantes)
-# ─────────────────────────────────────────────────────────────────────────────
+    from sklearn.ensemble import BaggingClassifier, AdaBoostClassifier, GradientBoostingClassifier
+from sklearn.tree import DecisionTreeClassifier
 
 def adestrar_por_bagging(
     modelo_base,
@@ -137,10 +88,17 @@ def adestrar_por_bagging(
     max_samples: float = 1.0,
     max_features: float = 1.0,
     cv: int = 5,
-    seed: int = 42,
+    seed: int = 42
 ) -> tuple[object, np.ndarray]:
     """
     Adestra un clasificador mediante bagging sobre un modelo base.
+
+    O bagging funciona así:
+      1. Créanse N subconxuntos do dataset de adestramento mediante mostraxe
+         con reposición (bootstrap).
+      2. Adéstrase unha copia do modelo base en cada subconxunto.
+      3. A predición final obtense por votación maioritaria entre todos os
+         modelos adestrados.
 
     Parámetros
     ----------
@@ -149,8 +107,8 @@ def adestrar_por_bagging(
     y_train       : Target de adestramento.
     X_test        : Features de test.
     n_estimators  : Número de modelos base a adestrar.
-    max_samples   : Fracción de mostras para cada modelo base.
-    max_features  : Fracción de features para cada modelo base.
+    max_samples   : Fracción (ou número) de mostras para cada modelo base.
+    max_features  : Fracción (ou número) de features para cada modelo base.
     cv            : Número de folds para a validación cruzada.
     seed          : Semente para reproducibilidade.
 
@@ -164,26 +122,28 @@ def adestrar_por_bagging(
         n_estimators=n_estimators,
         max_samples=max_samples,
         max_features=max_features,
-        bootstrap=True,
+        bootstrap=True,         # mostraxe con reposición (bootstrap clásico)
         bootstrap_features=False,
         n_jobs=-1,
-        random_state=seed,
+        random_state=seed
     )
 
-    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed)
+    # ── Validación cruzada ───────────────────────────────────────────────────
+    print("Executando validación cruzada do bagging")
+    cv_scores = cross_val_score(bagging_clf, X_train, y_train, cv=cv, scoring='f1_macro')
+    print(f"CV F1-Macro (Bagging): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n")
 
-    print("Executando validación cruzada do bagging...")
-    cv_scores = cross_val_score(bagging_clf, X_train, y_train, cv=skf, scoring='f1_macro')
-    print(f"  CV F1-Macro (Bagging): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n")
-
-    print("Adestramento final do bagging...")
+    # ── Adestramento final ───────────────────────────────────────────────────
+    print("Adestramento final do bagging")
     bagging_clf.fit(X_train, y_train)
 
     preds_train = bagging_clf.predict(X_train)
     f1_train = f1_score(y_train, preds_train, average='macro')
-    print(f"  Train F1-Macro: {f1_train:.4f}\n")
+    print(f"Train F1-Macro: {f1_train:.4f}\n")
 
+    # ── Predicións sobre test ────────────────────────────────────────────────
     preds_test = bagging_clf.predict(X_test)
+
     return bagging_clf, preds_test
 
 
@@ -196,20 +156,28 @@ def adestrar_por_boosting(
     learning_rate: float = 0.1,
     max_depth: int = 3,
     cv: int = 5,
-    seed: int = 42,
+    seed: int = 42
 ) -> tuple[object, np.ndarray]:
     """
-    Adestra un clasificador mediante boosting (gradient ou adaboost).
+    Adestra un clasificador mediante boosting.
+
+    O boosting funciona así:
+      1. Adéstrase un modelo débil inicial sobre os datos.
+      2. Cada modelo seguinte ponse a foco nos exemplos que o anterior
+         clasificou mal, incrementando o seu peso (AdaBoost) ou axustando
+         os residuos do erro (Gradient Boosting).
+      3. A predición final é unha combinación ponderada de todos os modelos.
 
     Parámetros
     ----------
     X_train       : Features de adestramento.
     y_train       : Target de adestramento.
     X_test        : Features de test.
-    tipo          : 'gradient' ou 'adaboost'.
-    n_estimators  : Número de estimadores.
-    learning_rate : Taxa de aprendizaxe.
-    max_depth     : Profundidade máxima (só 'gradient').
+    tipo          : Algoritmo de boosting: 'gradient' ou 'adaboost'.
+    n_estimators  : Número de estimadores (rondas de boosting).
+    learning_rate : Taxa de aprendizaxe; controla a contribución de cada árbol.
+                    Valores pequenos require máis estimadores.
+    max_depth     : Profundidade máxima de cada árbol base (só 'gradient').
     cv            : Número de folds para a validación cruzada.
     seed          : Semente para reproducibilidade.
 
@@ -223,35 +191,36 @@ def adestrar_por_boosting(
             n_estimators=n_estimators,
             learning_rate=learning_rate,
             max_depth=max_depth,
-            random_state=seed,
+            random_state=seed
         )
     elif tipo == 'adaboost':
         boosting_clf = AdaBoostClassifier(
-            estimator=DecisionTreeClassifier(max_depth=1),
+            estimator=DecisionTreeClassifier(max_depth=1),  # stump clásico
             n_estimators=n_estimators,
             learning_rate=learning_rate,
             random_state=seed,
-            algorithm='SAMME',
+            algorithm='SAMME'
         )
     else:
-        raise ValueError(f"Tipo non recoñecido: '{tipo}'. Usa 'gradient' ou 'adaboost'.")
+        raise ValueError(f"Tipo de boosting non recoñecido: '{tipo}'. Usa 'gradient' ou 'adaboost'.")
 
-    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed)
+    # ── Validación cruzada ───────────────────────────────────────────────────
+    print(f"Executando validación cruzada do boosting ({tipo})")
+    cv_scores = cross_val_score(boosting_clf, X_train, y_train, cv=cv, scoring='f1_macro')
+    print(f"CV F1-Macro (Boosting/{tipo}): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n")
 
-    print(f"Executando validación cruzada do boosting ({tipo})...")
-    cv_scores = cross_val_score(boosting_clf, X_train, y_train, cv=skf, scoring='f1_macro')
-    print(f"  CV F1-Macro (Boosting/{tipo}): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n")
-
-    print(f"Adestramento final do boosting ({tipo})...")
+    # ── Adestramento final ───────────────────────────────────────────────────
+    print(f"Adestramento final do boosting ({tipo})")
     boosting_clf.fit(X_train, y_train)
 
     preds_train = boosting_clf.predict(X_train)
     f1_train = f1_score(y_train, preds_train, average='macro')
-    print(f"  Train F1-Macro: {f1_train:.4f}\n")
+    print(f"Train F1-Macro: {f1_train:.4f}\n")
 
+    # ── Predicións sobre test ────────────────────────────────────────────────
     preds_test = boosting_clf.predict(X_test)
-    return boosting_clf, preds_test
 
+    return boosting_clf, preds_test
 
 def adestrar_por_blending(
     modelos_base: list,
@@ -259,18 +228,18 @@ def adestrar_por_blending(
     y_train: pd.Series,
     X_test: pd.DataFrame,
     meta_modelo=None,
-    test_size: float = 0.2,
-    seed: int = 42,
+    test_size=0.2,
+    seed=42
 ) -> tuple[object, np.ndarray]:
     """
     Adestra un conxunto de modelos base e un meta-modelo mediante blending.
-
+    
     Pasos:
       1. Divide o adestramento nun base_train_data e un holdout_set.
       2. Adestra os modelos base no base_train_data e xera predicións.
       3. Adestra o meta-modelo coas variables orixinais + as predicións base.
       4. Predí sobre test usando as variables orixinais + as predicións base.
-
+      
     Parámetros
     ----------
     modelos_base : Lista de tuplas (nome, estimador) compatibles con sklearn.
@@ -278,47 +247,51 @@ def adestrar_por_blending(
     y_train      : Target de adestramento.
     X_test       : Features de test.
     meta_modelo  : Estimador para combinar as saídas dos modelos base.
+                   Por defecto úsase LogisticRegression.
     test_size    : Proporción do conxunto de adestramento usada para o holdout.
-    seed         : Semente para reproducibilidade.
-
-    Devolve
-    -------
-    meta_modelo : O meta-modelo xa adestrado.
-    preds_test  : Array coas predicións finais sobre X_test.
     """
     if meta_modelo is None:
-        meta_modelo = LogisticRegression(
-            random_state=seed,
-            class_weight='balanced',
-        )
+        meta_modelo = LogisticRegression(random_state=seed, class_weight='balanced')
 
+    # ── Paso 1: Dividir o conxunto de adestramento ───────────────────────────
     X_base, X_holdout, y_base, y_holdout = train_test_split(
-        X_train, y_train,
-        test_size=test_size,
-        random_state=seed,
-        stratify=y_train,
+        X_train, y_train, 
+        test_size=test_size, 
+        random_state=seed, 
+        stratify=y_train # Manter balance de clases (Revisar como funciona con ou sen el)
     )
 
+    # Matrices para almacenar as predicións 
     meta_features_holdout = np.zeros((X_holdout.shape[0], len(modelos_base)))
-    meta_features_test    = np.zeros((X_test.shape[0],    len(modelos_base)))
+    meta_features_test = np.zeros((X_test.shape[0], len(modelos_base)))
 
+    # ── Paso 2: Adestrar modelos base e predicir no holdout/test ─────────────
     for i, (nome, modelo) in enumerate(modelos_base):
         print(f"   -> Adestrando co modelo {nome}")
-        modelo.fit(X_base, y_base)
-        meta_features_holdout[:, i] = modelo.predict(X_holdout)
-        meta_features_test[:, i]    = modelo.predict(X_test)
+        modelo.fit(X_base, y_base) # Adestrar co base
+        meta_features_holdout[:, i] = modelo.predict(X_holdout) # Gardar as predicións do holdout
+        meta_features_test[:, i] = modelo.predict(X_test)
 
-    X_holdout_arr = X_holdout.values if isinstance(X_holdout, pd.DataFrame) else X_holdout
-    X_test_arr    = X_test.values    if isinstance(X_test,    pd.DataFrame) else X_test
+    # ── Paso 3: Adestrar o meta-modelo (Atributos orixinais + Predicións) ────
+    
+    # Liadas de pandas e numpy
+    X_holdout_orixinal = X_holdout.values if isinstance(X_holdout, pd.DataFrame) else X_holdout
+    X_test_orixinal = X_test.values if isinstance(X_test, pd.DataFrame) else X_test
 
-    X_holdout_meta = np.hstack((X_holdout_arr, meta_features_holdout))
-    X_test_meta    = np.hstack((X_test_arr,    meta_features_test))
+    # Combinamos os atributos orixinais coas novas predicións (meta-features)
+    X_holdout_meta = np.hstack((X_holdout_orixinal, meta_features_holdout))
+    X_test_meta = np.hstack((X_test_orixinal, meta_features_test))
 
+    # Adestramos o meta-modelo
     meta_modelo.fit(X_holdout_meta, y_holdout)
 
+    # Avaliación rápida do meta-modelo no propio holdout para ver como de ben aprendeu
     preds_holdout_meta = meta_modelo.predict(X_holdout_meta)
     f1_holdout = f1_score(y_holdout, preds_holdout_meta, average='macro')
     print(f"   -> F1-Macro do meta-modelo no Holdout: {f1_holdout:.4f}")
 
+    # ── Paso 4: Predicións finais ────────────────────────────────────────────
+
     preds_test = meta_modelo.predict(X_test_meta)
+
     return meta_modelo, preds_test

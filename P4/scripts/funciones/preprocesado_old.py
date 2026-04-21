@@ -1,14 +1,57 @@
 import pandas as pd
-import numpy as np
-from sklearn.feature_selection import mutual_info_classif
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Restriccións de dominio (sen cambios)
+# Función de selección de variables
 # ─────────────────────────────────────────────────────────────────────────────
+    
+def seleccion_de_variables(X_encoded: pd.DataFrame, y: pd.Series, n: int) -> list[str]:
+    """
+    Calcula a correlación de cada variable co target e devolve as n con maior
+    correlación absoluta.
+ 
+    Parámetros
+    ----------
+    X_encoded : DataFrame con todas as variables (xa codificadas).
+    y         : Serie co target.
+    n         : Número de variables a seleccionar.
+ 
+    Devolve
+    -------
+    Lista de n nomes de columnas ordenadas de maior a menor correlación.
+    """
+    df_corr = X_encoded.copy()
+    df_corr['_target_'] = y.values
+ 
+    correlacions = df_corr.corr()['_target_'].abs().sort_values(ascending=False)
+ 
+    # O índice 0 é a correlación do target consigo mesmo (1.0), saltámolo
+    features = correlacions.index[1:n + 1].tolist()
+ 
+    print(f"--- TOP {n} Variables ---")
+    for feat in features:
+        print(f"  · {feat}  (corr: {correlacions[feat]:.4f})")
+    print("-" * 35 + "\n")
+ 
+    return features
+
+import pandas as pd
+import numpy as np
+
+
+# ── Restriccións de dominio ───────────────────────────────────────────────────
+#
+#   Cada entrada define os valores/rangos válidos para a súa variable.
+#   Formato:
+#     - Numérico continuo  → (min, max)   [None = sen límite nese extremo]
+#     - Conxunto de valores válidos → set(...)
+#
+# _RESTRICCIONS aplícase ANTES de codificar (usa nomes de columna orixinais).
 
 _RESTRICCIONS: dict = {
+    # ── Identificación e data ────────────────────────────────────────────────
     'ID_Cliente':                  (100_000, None),
-    'Data_Solicitude':             ('2021-01-01', '2023-12-31'),
+    'Data_Solicitude':             ('2021-01-01', '2023-12-31'),   # tratada á parte
+    # ── Perfil persoal ───────────────────────────────────────────────────────
     'Idade':                       (18, 85),
     'Lonxitude_Nome':              (10, 35),
     'Num_Fillos':                  (0, 12),
@@ -16,15 +59,18 @@ _RESTRICCIONS: dict = {
                                     'Estudante', 'Desempregado'},
     'Anos_Emprego':                (0.0, 62.0),
     'Ingresos_Anuais':             (0, None),
+    # ── Comportamento web ────────────────────────────────────────────────────
     'Tipo_Dispositivo':            {'PC_Windows', 'Mac', 'iPhone', 'Android', 'Linux'},
     'Tempo_Web_Minutos':           (1, 50),
     'Subscricion_Email':           {0, 1},
     'Dia_Solicitude':              {'Luns', 'Martes', 'Mércores', 'Xoves',
                                     'Venres', 'Sábado', 'Domingo'},
+    # ── Xeografía e patrimonio ───────────────────────────────────────────────
     'Distancia_Oficina_Km':        (0, None),
     'Codigo_Postal':               (0, None),
     'Patrimonio_Total':            (0, None),
     'Debeda_Total':                (0, None),
+    # ── Historial crediticio ─────────────────────────────────────────────────
     'Historial_Impagos':           {0, 1},
     'Numero_Tarxetas':             (0, 12),
     'Utilizacion_Credito':         (0.0, 1.2),
@@ -34,13 +80,18 @@ _RESTRICCIONS: dict = {
     'Ratio_Cota_Ingresos':         (0.0, 2.5),
     'Prestamos_Activos':           (0, 9),
     'Antiguedade_Cliente_Anos':    (0.0, 40.0),
+    # ── Saldo e estres ───────────────────────────────────────────────────────
     'Saldo_Medio_3M':              (0, None),
     'Variacion_Saldo_6M':          (-1.0, 1.0),
     'Fondo_Emerxencia_Meses':      (0.0, 24.0),
     'Indice_Estres_Financeiro':    (0.0, 2.0),
+    # ── Target (só en train) ─────────────────────────────────────────────────
     'Target_Risco':                {0, 1, 2, 3},
 }
 
+# Columnas numéricas continuas sobre as que aplicar detección de outliers IQR.
+# Excluímos variables binarias, discretas de rango moi pequeno e identificadores,
+# porque os seus valores posibles xa quedan cubertos polas restriccións de dominio.
 _COLS_OUTLIERS = [
     'Idade', 'Lonxitude_Nome', 'Anos_Emprego', 'Ingresos_Anuais',
     'Tempo_Web_Minutos', 'Distancia_Oficina_Km', 'Patrimonio_Total',
@@ -52,110 +103,7 @@ _COLS_OUTLIERS = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Función de selección de variables  [FIX] Pearson → Mutual Information
-# ─────────────────────────────────────────────────────────────────────────────
-
-def seleccion_de_variables(
-    X_encoded: pd.DataFrame,
-    y: pd.Series,
-    n: int,
-    random_state: int = 42,
-) -> list[str]:
-    """
-    Selecciona as n variables con maior información mutua co target.
-
-    A información mutua (MI) mide dependencia non-lineal e é apropiada para
-    targets de clasificación multiclase, a diferenza da correlación de Pearson
-    que só captura relacións lineais e trata o target como continuo.
-
-    Parámetros
-    ----------
-    X_encoded    : DataFrame con todas as variables (xa codificadas/numéricas).
-    y            : Serie co target (enteiros 0..K-1).
-    n            : Número de variables a seleccionar.
-    random_state : Semente para reproducibilidade do estimador MI.
-
-    Devolve
-    -------
-    Lista de n nomes de columnas ordenadas de maior a menor MI.
-    """
-    # mutual_info_classif require arrays numpy sen NaN
-    X_arr = X_encoded.values.astype(float)
-    mi_scores = mutual_info_classif(X_arr, y, random_state=random_state)
-    mi_series = pd.Series(mi_scores, index=X_encoded.columns).sort_values(ascending=False)
-
-    features = mi_series.index[:n].tolist()
-
-    print(f"--- TOP {n} Variables (Mutual Information) ---")
-    for feat in features:
-        print(f"  · {feat}  (MI: {mi_series[feat]:.4f})")
-    print("-" * 45 + "\n")
-
-    return features
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Función de inxeniería de variables  [NOVO]
-# ─────────────────────────────────────────────────────────────────────────────
-
-def crear_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Engade novas variables derivadas ao DataFrame.
-
-    As transformacións aplícanse sobre o DataFrame *antes* de eliminar columnas
-    nin de codificar categóricas, polo que deben chamarse ao comezo do pipeline
-    (logo da limpeza, antes do encoding).
-
-    Features creados
-    ----------------
-    Ratios financeiros:
-      · ratio_debeda_ingresos   : Debeda total relativa aos ingresos anuais.
-                                  É o 2º feature con maior MI no dataset.
-      · patrimonio_neto         : Patrimonio Total menos Débeda Total.
-      · ratio_saldo_mensual     : Saldo medio mensual vs ingreso mensual.
-      · ratio_limite_ingresos   : Límite de crédito relativo aos ingresos.
-      · ratio_cota_patrimonio   : Cota mensual relativa ao patrimonio neto.
-
-    Temporais (extrae de Data_Solicitude):
-      · mes_solicitude          : Mes (1–12), pode ter estacionalidade.
-      · trimestre_solicitude    : Trimestre (1–4).
-      · ano_solicitude          : Ano (2021, 2022, 2023).
-    """
-    df = df.copy()
-    eps = 1.0   # evita divisións por cero
-
-    # ── Ratios financeiros ────────────────────────────────────────────────────
-    df['ratio_debeda_ingresos'] = (
-        df['Debeda_Total'] / (df['Ingresos_Anuais'] + eps)
-    )
-    df['patrimonio_neto'] = df['Patrimonio_Total'] - df['Debeda_Total']
-
-    ingreso_mensual = df['Ingresos_Anuais'] / 12 + eps
-    df['ratio_saldo_mensual'] = df['Saldo_Medio_3M'] / ingreso_mensual
-
-    df['ratio_limite_ingresos'] = (
-        df['Limite_Credito_Total'] / (df['Ingresos_Anuais'] + eps)
-    )
-
-    patrimonio_neto_pos = df['patrimonio_neto'].clip(lower=eps)
-    df['ratio_cota_patrimonio'] = (
-        df['Cota_Mensual_Prestamos'] / patrimonio_neto_pos
-    )
-
-    # ── Temporais ─────────────────────────────────────────────────────────────
-    if 'Data_Solicitude' in df.columns:
-        datas = pd.to_datetime(df['Data_Solicitude'], errors='coerce')
-        df['mes_solicitude']       = datas.dt.month
-        df['trimestre_solicitude'] = datas.dt.quarter
-        df['ano_solicitude']       = datas.dt.year
-
-    n_novos = 5 + (3 if 'Data_Solicitude' in df.columns else 0)
-    print(f"[Feature Eng.] {n_novos} novas variables engadidas.\n")
-    return df
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Función principal de preprocesado
+# Función de preprocesado
 # ─────────────────────────────────────────────────────────────────────────────
 
 def preprocesar_datos(
@@ -171,30 +119,26 @@ def preprocesar_datos(
 
     O test NON se limpa: non se eliminan duplicados, valores imposibles,
     outliers nin filas con moitos NaN. O test só recibe:
-      · Inxeniería de variables (mesmas operacións que en train).
       · Imputación de NaN coas medianas calculadas en train.
       · Normalización cos parámetros (media, std) calculados en train.
 
     Limpeza (só sobre train):
-      1. Duplicados        → elimínanse directamente (fix: antes convertíanse
-                             en NaN, corrompendo datos válidos).
-      2. Valores imposibles → valores fóra dos rangos/conxuntos → NaN.
+      1. Duplicados        → filas duplicadas convértense en NaN.
+      2. Valores imposibles → valores fóra dos rangos/conxuntos válidos → NaN.
       3. Outliers (toggle) → valores extremos por IQR (1.5·IQR) → NaN.
       4. Xestión de NaN   → filas con moitos NaN elimínanse; o resto impútase
                              coa mediana de train.
 
     Transformación (train e test):
-      5. Inxeniería de variables (ratios financeiros + temporais).
-      6. Separación do target.
-      7. Eliminación de columnas non útiles (ID_Cliente, Data_Solicitude).
-      8. Codigo_Postal → string (fix: trátase como categórica, non numérica).
-      9. One-Hot Encoding das variables categóricas.
-     10. Aliñamento train/test.
-     11. Normalización N(0,1) cos parámetros de train (toggle).
+      5. Separación do target.
+      6. Eliminación de columnas non útiles (ID_Cliente, Data_Solicitude).
+      7. One-Hot Encoding das variables categóricas.
+      8. Aliñamento train/test.
+      9. Normalización N(0,1) cos parámetros de train (toggle).
     """
-    print("=" * 60)
+    print("=" * 55)
     print("  PREPROCESADO DE DATOS")
-    print("=" * 60)
+    print("=" * 55)
 
     train = train.copy()
     test  = test.copy()
@@ -204,14 +148,15 @@ def preprocesar_datos(
     train = _eliminar_imposibles(train)
 
     if eliminar_outliers:
-        train, _ = _eliminar_outliers_iqr(train)
+        train, limites_iqr = _eliminar_outliers_iqr(train)
     else:
         print("[Paso 3] Detección de outliers desactivada.\n")
+        limites_iqr = {}
 
     train, medianas = _xestionar_nans_train(train, umbral_nan)
 
     # ── Imputación do test coas medianas de train ─────────────────────────────
-    if imputar_nan_test:
+    if(imputar_nan_test):
         print("[Test] Imputando NaN coas medianas de train...")
         n_imputadas = test.isna().sum().sum()
         for col in test.columns:
@@ -219,73 +164,54 @@ def preprocesar_datos(
                 test[col] = test[col].fillna(medianas[col])
         print(f"  · {n_imputadas} celdas imputadas\n")
 
-    # ── Paso 5: Inxeniería de variables ───────────────────────────────────────
-    print("[Paso 5] Creando novas variables derivadas...")
-    train = crear_features(train)
-    test  = crear_features(test)
-
-    # ── Paso 6: Separar o target ──────────────────────────────────────────────
+    # ── Paso 5: Separar o target ──────────────────────────────────────────────
     y_train = train['Target_Risco'].copy()
 
-    # ── Paso 7: Eliminar columnas non útiles ──────────────────────────────────
-    cols_drop_train = ['ID_Cliente', 'Data_Solicitude', 'Target_Risco']
-    cols_drop_test  = ['ID_Cliente', 'Data_Solicitude']
+    # ── Paso 6: Eliminar columnas non útiles ──────────────────────────────────
+    cols_drop_train = ['ID_Cliente', 'Target_Risco']
+    cols_drop_test  = ['ID_Cliente']
 
     X_train_raw = train.drop(columns=[c for c in cols_drop_train if c in train.columns])
     X_test_raw  = test.drop(columns=[c for c in cols_drop_test  if c in test.columns])
 
-    # ── Paso 8: Codigo_Postal como categórica ─────────────────────────────────
-    # [FIX] Código postal só ten 13 valores únicos. Tratar como numérico
-    # continuo non ten sentido. Convertemos a string para que o OHE o trate
-    # como calquera outra variable categórica.
-    for df_ in [X_train_raw, X_test_raw]:
-        if 'Codigo_Postal' in df_.columns:
-            df_['Codigo_Postal'] = 'CP_' + df_['Codigo_Postal'].astype(int).astype(str)
-
-    # ── Paso 9: One-Hot Encoding ──────────────────────────────────────────────
+    # ── Paso 7: One-Hot Encoding ──────────────────────────────────────────────
     X_train_encoded = pd.get_dummies(X_train_raw)
     X_test_encoded  = pd.get_dummies(X_test_raw)
 
-    # ── Paso 10: Aliñamento ───────────────────────────────────────────────────
+    # ── Paso 8: Aliñamento ────────────────────────────────────────────────────
     X_train_aligned, X_test_aligned = X_train_encoded.align(
         X_test_encoded, join='left', axis=1, fill_value=0
     )
 
-    # ── Paso 11: Normalización cos parámetros de train ────────────────────────
+    # ── Paso 9: Normalización cos parámetros de train ─────────────────────────
     if normalizar:
         X_train_aligned, X_test_aligned = _normalizar(X_train_aligned, X_test_aligned)
     else:
-        print("[Paso 11] Normalización desactivada.\n")
+        print("[Paso 9] Normalización desactivada.\n")
 
-    print(f"{'=' * 60}")
+    print(f"{'=' * 55}")
     print(f"  Preprocesado rematado.")
     print(f"  Train final : {X_train_aligned.shape[0]} filas · {X_train_aligned.shape[1]} variables")
     print(f"  Test final  : {X_test_aligned.shape[0]} filas · {X_test_aligned.shape[1]} variables")
-    print(f"{'=' * 60}\n")
+    print(f"{'=' * 55}\n")
 
     return X_train_aligned, X_test_aligned, y_train
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Funcións auxiliares (privadas)
+# Funcións auxiliares (privadas) — só actúan sobre train
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _eliminar_duplicados(train: pd.DataFrame) -> pd.DataFrame:
-    """
-    Elimina directamente as filas duplicadas de train.
-
-    [FIX] A versión anterior convertía as filas duplicadas en NaN, o que
-    corrompía os datos válidos desas filas (incluíndo o target). A corrección
-    correcta é eliminar as filas duplicadas directamente con drop_duplicates.
-    """
+    """Converte en NaN as filas duplicadas de train (mantén a primeira ocorrencia)."""
     print("[Paso 1] Eliminando duplicados en train...")
-    n_antes = len(train)
-    train = train.drop_duplicates(keep='first').reset_index(drop=True)
-    n_dup = n_antes - len(train)
+    mascara_dup = train.duplicated(keep='first')
+    n_dup = mascara_dup.sum()
     if n_dup > 0:
-        print(f"  · {n_dup} filas duplicadas eliminadas")
+        train.loc[mascara_dup, :] = np.nan
+        print(f"  · Train: {n_dup} filas duplicadas → convertidas en NaN")
     else:
-        print(f"  · Sen duplicados")
+        print(f"  · Train: sen duplicados")
     print()
     return train
 
@@ -312,7 +238,7 @@ def _eliminar_imposibles(train: pd.DataFrame) -> pd.DataFrame:
             total_celdas_nan += n_malos
             filas_afectadas.update(train.index[mascara].tolist())
 
-    print(f"  · {total_celdas_nan} celdas → NaN en {len(filas_afectadas)} filas\n")
+    print(f"  · Train: {total_celdas_nan} celdas → NaN en {len(filas_afectadas)} filas\n")
     return train
 
 
@@ -320,7 +246,10 @@ def _eliminar_outliers_iqr(
     train: pd.DataFrame,
     factor: float = 1.5,
 ) -> tuple[pd.DataFrame, dict]:
-    """Detecta outliers por IQR en train e convérteos en NaN."""
+    """
+    Detecta outliers por IQR en train e convérteos en NaN.
+    Devolve o train limpo e os límites calculados (por se se necesitan noutro lado).
+    """
     print(f"[Paso 3] Detectando outliers en train (IQR · {factor})...")
     limites = {}
     total_celdas_nan = 0
@@ -342,7 +271,7 @@ def _eliminar_outliers_iqr(
             total_celdas_nan += n_malos
             filas_afectadas.update(train.index[mascara].tolist())
 
-    print(f"  · {total_celdas_nan} outliers → NaN en {len(filas_afectadas)} filas\n")
+    print(f"  · Train: {total_celdas_nan} outliers → NaN en {len(filas_afectadas)} filas\n")
     return train, limites
 
 
@@ -363,13 +292,13 @@ def _xestionar_nans_train(
     n_eliminadas     = mascara_eliminar.sum()
     train.drop(index=train.index[mascara_eliminar], inplace=True)
 
-    medianas    = train.median(numeric_only=True)
-    n_imputadas = train.isna().sum().sum()
+    medianas     = train.median(numeric_only=True)
+    n_imputadas  = train.isna().sum().sum()
     for col in train.columns:
         if train[col].isna().any():
             train[col] = train[col].fillna(medianas.get(col, 0))
 
-    print(f"  · {n_eliminadas} filas eliminadas · {n_imputadas} celdas imputadas coa mediana\n")
+    print(f"  · Train: {n_eliminadas} filas eliminadas · {n_imputadas} celdas imputadas coa mediana\n")
     return train, medianas
 
 
@@ -377,14 +306,14 @@ def _normalizar(
     X_train: pd.DataFrame,
     X_test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Estandariza a N(0,1) cos parámetros de train. As columnas OHE non se normalizan."""
-    print("[Paso 11] Normalizando variables a N(0,1)...")
+    """Estandariza a N(0,1) cos parámetros de train. As columnas one-hot non se normalizan."""
+    print("[Paso 9] Normalizando variables a N(0,1)...")
 
     X_train_norm = X_train.copy()
     X_test_norm  = X_test.copy()
 
     cols_onehot    = [col for col in X_train.columns
-                      if set(X_train[col].dropna().unique()).issubset({0, 1})]
+                      if X_train[col].dropna().isin([0, 1]).all()]
     cols_numericas = [col for col in X_train.columns if col not in cols_onehot]
 
     n_normalizadas = 0
@@ -397,7 +326,7 @@ def _normalizar(
         X_test_norm[col]  = (X_test[col]  - media) / std
         n_normalizadas += 1
 
-    print(f"  · {n_normalizadas} variables normalizadas · {len(cols_onehot)} OHE omitidas\n")
+    print(f"  · {n_normalizadas} variables normalizadas · {len(cols_onehot)} one-hot omitidas\n")
     return X_train_norm, X_test_norm
 
 
