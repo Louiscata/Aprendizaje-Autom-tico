@@ -27,3 +27,7 @@ Preprocesado v2
 
 Stacking con función de preprocesado v2, con selección de variables por Mutual Information en vez de correlación, con modelos LGBM y XGB (además de otros) en el stacking y con passthrough de las entradas. - 0.7703
 Blending con logaritmo e clamping de outliers - 0.7564
+Blending con metamodelo random forest - 0.7577
+Stacking coas melloras de antes - 0.7704
+Stacking con XGB e LGBM. 25 variables - 0.7740
+Stacking quitando cousas como o clamp de outliers - 0.7654
