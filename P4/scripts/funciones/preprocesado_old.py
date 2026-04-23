@@ -60,7 +60,7 @@ _RESTRICCIONS: dict = {
     'Anos_Emprego':                (0.0, 62.0),
     'Ingresos_Anuais':             (0, None),
     # ── Comportamento web ────────────────────────────────────────────────────
-    'Tipo_Dispositivo':            {'PC_Windows', 'Mac', 'iPhone', 'Android', 'Linux'},
+    'Tipo_Dispositivo':            {'Windows', 'MacOS', 'iOS', 'Android', 'Linux'},
     'Tempo_Web_Minutos':           (1, 50),
     'Subscricion_Email':           {0, 1},
     'Dia_Solicitude':              {'Luns', 'Martes', 'Mércores', 'Xoves',
