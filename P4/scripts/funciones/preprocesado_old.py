@@ -174,6 +174,11 @@ def preprocesar_datos(
     X_train_raw = train.drop(columns=[c for c in cols_drop_train if c in train.columns])
     X_test_raw  = test.drop(columns=[c for c in cols_drop_test  if c in test.columns])
 
+    # ──  Codigo_Postal como categórica ─────────────────────────────────────────
+    for df_ in [X_train_raw, X_test_raw]:
+        if 'Codigo_Postal' in df_.columns:
+            df_['Codigo_Postal'] = 'CP_' + df_['Codigo_Postal'].astype(int).astype(str)
+
     # ── Paso 7: One-Hot Encoding ──────────────────────────────────────────────
     X_train_encoded = pd.get_dummies(X_train_raw)
     X_test_encoded  = pd.get_dummies(X_test_raw)
@@ -203,13 +208,13 @@ def preprocesar_datos(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _eliminar_duplicados(train: pd.DataFrame) -> pd.DataFrame:
-    """Converte en NaN as filas duplicadas de train (mantén a primeira ocorrencia)."""
+    """Elimina directamente as filas duplicadas de train."""
     print("[Paso 1] Eliminando duplicados en train...")
-    mascara_dup = train.duplicated(keep='first')
-    n_dup = mascara_dup.sum()
+    n_antes = len(train)
+    train = train.drop_duplicates(keep='first').reset_index(drop=True)
+    n_dup = n_antes - len(train)
     if n_dup > 0:
-        train.loc[mascara_dup, :] = np.nan
-        print(f"  · Train: {n_dup} filas duplicadas → convertidas en NaN")
+        print(f"  · Train: {n_dup} filas duplicadas eliminadas")
     else:
         print(f"  · Train: sen duplicados")
     print()

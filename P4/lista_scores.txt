@@ -31,3 +31,9 @@ Blending con metamodelo random forest - 0.7577
 Stacking coas melloras de antes - 0.7704
 Stacking con XGB e LGBM. 25 variables - 0.7740
 Stacking quitando cousas como o clamp de outliers - 0.7654
+Otras pruebas dia 23 - 0.7684
+
+Vuelta a los origenes
+
+Codigo muy parecido al del dia 17, no se que cambió - 0.7863
+Este mismo codigo pero con 3 modelos Random Forest, LGBM y XGB - 0.7912

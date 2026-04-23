@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 from sklearn.feature_selection import mutual_info_classif
 
@@ -48,6 +48,9 @@ _COLS_OUTLIERS = [
     'Cota_Mensual_Prestamos', 'Ratio_Cota_Ingresos', 'Antiguedade_Cliente_Anos',
     'Saldo_Medio_3M', 'Variacion_Saldo_6M', 'Fondo_Emerxencia_Meses',
     'Indice_Estres_Financeiro',
+    # Variables derivadas
+    'ratio_debeda_ingresos', 'patrimonio_neto', 'ratio_saldo_mensual', 
+    'ratio_limite_ingresos', 'ratio_cota_patrimonio'
 ]
 
 # Variables que ao velas no histograma teñen unha gran acumulación próxima ao cero e unha longa cola cara a dereita, o que suxire que unha transformación logarítmica pode mellorar a súa distribución e a súa relación co obxectivo.
@@ -58,12 +61,17 @@ _COLS_TRANSFORMACION_LOG = [
     'Debeda_Total',
     'Limite_Credito_Total',
     'Saldo_Medio_3M',
-    'Cota_Mensual_Prestamos'
+    'Cota_Mensual_Prestamos',
+    # Variables derivadas
+    'ratio_debeda_ingresos',
+    'ratio_saldo_mensual',
+    'ratio_limite_ingresos',
+    'ratio_cota_patrimonio'
 ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Función de selección de variables  [FIX] Pearson → Mutual Information
+# Función de selección de variables  [FIX] Pearson -> Mutual Information
 # ─────────────────────────────────────────────────────────────────────────────
 
 def seleccion_de_variables(
@@ -99,7 +107,7 @@ def seleccion_de_variables(
 
     print(f"--- TOP {n} Variables (Mutual Information) ---")
     for feat in features:
-        print(f"  · {feat}  (MI: {mi_series[feat]:.4f})")
+        print(f"  - {feat}  (MI: {mi_series[feat]:.4f})")
     print("-" * 45 + "\n")
 
     return features
@@ -120,17 +128,17 @@ def crear_features(df: pd.DataFrame) -> pd.DataFrame:
     Features creados
     ----------------
     Ratios financeiros:
-      · ratio_debeda_ingresos   : Debeda total relativa aos ingresos anuais.
+      - ratio_debeda_ingresos   : Debeda total relativa aos ingresos anuais.
                                   É o 2º feature con maior MI no dataset.
-      · patrimonio_neto         : Patrimonio Total menos Débeda Total.
-      · ratio_saldo_mensual     : Saldo medio mensual vs ingreso mensual.
-      · ratio_limite_ingresos   : Límite de crédito relativo aos ingresos.
-      · ratio_cota_patrimonio   : Cota mensual relativa ao patrimonio neto.
+      - patrimonio_neto         : Patrimonio Total menos Débeda Total.
+      - ratio_saldo_mensual     : Saldo medio mensual vs ingreso mensual.
+      - ratio_limite_ingresos   : Límite de crédito relativo aos ingresos.
+      - ratio_cota_patrimonio   : Cota mensual relativa ao patrimonio neto.
 
     Temporais (extrae de Data_Solicitude):
-      · mes_solicitude          : Mes (1–12), pode ter estacionalidade.
-      · trimestre_solicitude    : Trimestre (1–4).
-      · ano_solicitude          : Ano (2021, 2022, 2023).
+      - mes_solicitude          : Mes (1–12), pode ter estacionalidade.
+      - trimestre_solicitude    : Trimestre (1–4).
+      - ano_solicitude          : Ano (2021, 2022, 2023).
     """
     df = df.copy()
     eps = 1.0   # evita divisións por cero
@@ -183,23 +191,23 @@ def preprocesar_datos(
 
     O test NON se limpa: non se eliminan duplicados, valores imposibles,
     outliers nin filas con moitos NaN. O test só recibe:
-      · Inxeniería de variables (mesmas operacións que en train).
-      · Imputación de NaN coas medianas calculadas en train.
-      · Normalización cos parámetros (media, std) calculados en train.
+      - Inxeniería de variables (mesmas operacións que en train).
+      - Imputación de NaN coas medianas calculadas en train.
+      - Normalización cos parámetros (media, std) calculados en train.
 
     Limpeza (só sobre train):
-      1. Duplicados        → elimínanse directamente (fix: antes convertíanse
+      1. Duplicados        -> elimínanse directamente (fix: antes convertíanse
                              en NaN, corrompendo datos válidos).
-      2. Valores imposibles → valores fóra dos rangos/conxuntos → NaN.
-      3. Outliers (toggle) → valores extremos por IQR (1.5·IQR) → NaN.
-      4. Xestión de NaN   → filas con moitos NaN elimínanse; o resto impútase
+      2. Valores imposibles -> valores fóra dos rangos/conxuntos -> NaN.
+      3. Outliers (toggle) -> valores extremos por IQR (1.5-IQR) -> NaN.
+      4. Xestión de NaN   -> filas con moitos NaN elimínanse; o resto impútase
                              coa mediana de train.
 
     Transformación (train e test):
       5. Inxeniería de variables (ratios financeiros + temporais).
       6. Separación do target.
       7. Eliminación de columnas non útiles (ID_Cliente, Data_Solicitude).
-      8. Codigo_Postal → string (fix: trátase como categórica, non numérica).
+      8. Codigo_Postal -> string (fix: trátase como categórica, non numérica).
       9. One-Hot Encoding das variables categóricas.
      10. Aliñamento train/test.
      11. Normalización N(0,1) cos parámetros de train (toggle).
@@ -231,7 +239,7 @@ def preprocesar_datos(
         for col in test.columns:
             if test[col].isna().any() and col in medianas.index:
                 test[col] = test[col].fillna(medianas[col])
-        print(f"  · {n_imputadas} celdas imputadas\n")
+        print(f"  - {n_imputadas} celdas imputadas\n")
 
     # ── Paso 5: Inxeniería de variables ───────────────────────────────────────
     print("[Paso 5] Creando novas variables derivadas...")
@@ -270,9 +278,9 @@ def preprocesar_datos(
         X_train_aligned, n_trans = _aplicar_transformacion_log(X_train_aligned, _COLS_TRANSFORMACION_LOG)
         X_test_aligned, _        = _aplicar_transformacion_log(X_test_aligned, _COLS_TRANSFORMACION_LOG)
         if n_trans > 0:
-            print(f"  · {n_trans} variables transformadas para suavizar a distribución.\n")
+            print(f"  - {n_trans} variables transformadas para suavizar a distribución.\n")
         else:
-            print(f"  · Ningunha variable a transformar.\n")
+            print(f"  - Ningunha variable a transformar.\n")
 
     # ── Paso 12: Normalización cos parámetros de train ────────────────────────
     if normalizar:
@@ -282,8 +290,8 @@ def preprocesar_datos(
 
     print(f"{'=' * 60}")
     print(f"  Preprocesado rematado.")
-    print(f"  Train final : {X_train_aligned.shape[0]} filas · {X_train_aligned.shape[1]} variables")
-    print(f"  Test final  : {X_test_aligned.shape[0]} filas · {X_test_aligned.shape[1]} variables")
+    print(f"  Train final : {X_train_aligned.shape[0]} filas - {X_train_aligned.shape[1]} variables")
+    print(f"  Test final  : {X_test_aligned.shape[0]} filas - {X_test_aligned.shape[1]} variables")
     print(f"{'=' * 60}\n")
 
     return X_train_aligned, X_test_aligned, y_train
@@ -306,9 +314,9 @@ def _eliminar_duplicados(train: pd.DataFrame) -> pd.DataFrame:
     train = train.drop_duplicates(keep='first').reset_index(drop=True)
     n_dup = n_antes - len(train)
     if n_dup > 0:
-        print(f"  · {n_dup} filas duplicadas eliminadas")
+        print(f"  - {n_dup} filas duplicadas eliminadas")
     else:
-        print(f"  · Sen duplicados")
+        print(f"  - Sen duplicados")
     print()
     return train
 
@@ -335,7 +343,7 @@ def _eliminar_imposibles(train: pd.DataFrame) -> pd.DataFrame:
             total_celdas_nan += n_malos
             filas_afectadas.update(train.index[mascara].tolist())
 
-    print(f"  · {total_celdas_nan} celdas → NaN en {len(filas_afectadas)} filas\n")
+    print(f"  - {total_celdas_nan} celdas -> NaN en {len(filas_afectadas)} filas\n")
     return train
 
 
@@ -344,7 +352,7 @@ def _eliminar_outliers_iqr(
     factor: float = 1.5,
 ) -> tuple[pd.DataFrame, dict]:
     """Detecta outliers por IQR en train e convérteos en NaN."""
-    print(f"[Paso 3] Detectando outliers en train (IQR · {factor})...")
+    print(f"[Paso 3] Detectando outliers en train (IQR - {factor})...")
     limites = {}
     total_celdas_nan = 0
     filas_afectadas  = set()
@@ -365,7 +373,7 @@ def _eliminar_outliers_iqr(
             total_celdas_nan += n_malos
             filas_afectadas.update(train.index[mascara].tolist())
 
-    print(f"  · {total_celdas_nan} outliers → NaN en {len(filas_afectadas)} filas\n")
+    print(f"  - {total_celdas_nan} outliers -> NaN en {len(filas_afectadas)} filas\n")
     return train, limites
 
 # En vez de eliminar a un que teña ingresos multimillonarios, deixalo nun límite superior razonable.
@@ -375,7 +383,7 @@ def _capear_outliers_iqr(
     factor: float = 3.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Capa (winsorize) os outliers en train e test usando os límites de train."""
-    print(f"[Paso 3] Capeando outliers (Winsorización) con IQR · {factor}...")
+    print(f"[Paso 3] Capeando outliers (Winsorización) con IQR - {factor}...")
     
     train_capeado = train.copy()
     test_capeado = test.copy()
@@ -398,7 +406,7 @@ def _capear_outliers_iqr(
             
         n_capeados += 1
 
-    print(f"  · {n_capeados} variables capeadas aos límites razoables.\n")
+    print(f"  - {n_capeados} variables capeadas aos límites razoables.\n")
     return train_capeado, test_capeado
 
 def _xestionar_nans_train(
@@ -424,7 +432,7 @@ def _xestionar_nans_train(
         if train[col].isna().any():
             train[col] = train[col].fillna(medianas.get(col, 0))
 
-    print(f"  · {n_eliminadas} filas eliminadas · {n_imputadas} celdas imputadas coa mediana\n")
+    print(f"  - {n_eliminadas} filas eliminadas - {n_imputadas} celdas imputadas coa mediana\n")
     return train, medianas
 
 
@@ -452,7 +460,7 @@ def _normalizar(
         X_test_norm[col]  = (X_test[col]  - media) / std
         n_normalizadas += 1
 
-    print(f"  · {n_normalizadas} variables normalizadas · {len(cols_onehot)} OHE omitidas\n")
+    print(f"  - {n_normalizadas} variables normalizadas - {len(cols_onehot)} OHE omitidas\n")
     return X_train_norm, X_test_norm
 
 def _aplicar_transformacion_log(df: pd.DataFrame, columnas_log: list) -> tuple[pd.DataFrame, int]:

@@ -1,12 +1,11 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, StackingClassifier, AdaBoostClassifier, BaggingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.metrics import f1_score
 
 import warnings
@@ -49,18 +48,21 @@ def adestrar_por_stacking(
     if meta_modelo is None:
         meta_modelo = LogisticRegression(max_iter=1000, random_state=seed)
  
+    # Aseguramos particións balanceadas e aleatorias
+    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed)
+
     stacking_clf = StackingClassifier(
         estimators=modelos_base,
         final_estimator=meta_modelo,
-        cv=cv,
-        stack_method='predict_proba',   # usa probabilidades como meta-features
+        cv=skf,
+        stack_method='predict_proba',
         n_jobs=-1,
         passthrough=False,              # só pasan as saídas dos base, non X orixinal
     )
  
     # ── Validación cruzada do pipeline completo ──────────────────────────────
     print("Executando validación cruzada do stacking")
-    cv_scores = cross_val_score(stacking_clf, X_train, y_train, cv=cv, scoring='f1_macro')
+    cv_scores = cross_val_score(stacking_clf, X_train, y_train, cv=skf, scoring='f1_macro')
     print(f"CV F1-Macro (Stacking): {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n")
  
     # ── Adestramento final sobre todos os datos de train ─────────────────────
