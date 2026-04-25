@@ -3,6 +3,7 @@ import numpy as np
 
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.linear_model import LogisticRegression
+from funciones.modelado_old import adestrar_por_stacking
 
 # Importamos os motores modernos
 try:
@@ -16,14 +17,12 @@ try:
 except ImportError:
     XGB_AVAILABLE = False
 
-from funciones.modelado_old import adestrar_por_stacking
-
 import warnings
 warnings.filterwarnings('ignore')
 
 # ── 0. Variables globais ─────────────────────────────────────────────────────
-SEED = 42
-NUM_FEATURES = 15
+SEED = 777
+NUM_FEATURES = 16
 
 # ── 1. Cargar datos ──────────────────────────────────────────────────────────
 train = pd.read_csv('./data/train.csv')

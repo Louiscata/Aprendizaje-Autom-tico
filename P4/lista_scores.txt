@@ -37,3 +37,5 @@ Vuelta a los origenes
 
 Codigo muy parecido al del dia 17, no se que cambió - 0.7863
 Este mismo codigo pero con 3 modelos Random Forest, LGBM y XGB - 0.7912
+Muchas pruebas intermedias
+Cambiando la seed llegamos de ese llegamos a - 0.7959
