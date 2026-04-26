@@ -35,3 +35,7 @@ Tiñamos algunhas fallas como que, por exemplo, se quitamos un outlier e o imput
 Tampouco daba demasiado resultado converter algunhas variables en logaritmos ou facer "clamp" para poñer os outlier como o cuantil 99%
 
 Regresamos a algo moi sinxelo sen preprocesado empregando un random forest, LGBM e XGB que acadou puntuación de 0.79
+
+Tras moitas probas non logramos nada, determinamos que o preprocesado pode ser incluso dañino
+
+Engadir CatBoost mellora o resultado lixeiramente.
