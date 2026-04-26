@@ -39,3 +39,8 @@ Codigo muy parecido al del dia 17, no se que cambió - 0.7863
 Este mismo codigo pero con 3 modelos Random Forest, LGBM y XGB - 0.7912
 Muchas pruebas intermedias
 Cambiando la seed llegamos de ese llegamos a - 0.7959
+
+Catboost
+
+Solamente catboost - 0.7873
+XGB, LGBM y CatBoost - 0.7964 y 0.7937 con 18 variables, 0.7898 con 15 variables
