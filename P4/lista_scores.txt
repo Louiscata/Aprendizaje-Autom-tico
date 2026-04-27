@@ -44,3 +44,4 @@ Catboost
 
 Solamente catboost - 0.7873
 XGB, LGBM y CatBoost - 0.7964 y 0.7937 con 18 variables, 0.7898 con 15 variables
+Solamente catboost con las 17 mejores variables seleccionadas con catboost (daba los mejores resultados con 11 y 17) - 0.8062
