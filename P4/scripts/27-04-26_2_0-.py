@@ -1,18 +1,22 @@
 """
-catboost_sum_models.py
+catboost_sum_native.py
 ──────────────────────
 Competición Kaggle – Clasificación de risco crediticio (Target_Risco: 0-3)
 
 Estratexia:
-  1. Preprocesado: eliminación de duplicados + imputación por mediana
-  2. OHE para variables sen sentido numérico (Profesion, Tipo_Dispositivo,
-     Dia_Solicitude, Codigo_Postal)
-  3. Selección das top-17 variables por importancia de CatBoost
-  4. Para cada modelo dos CONFIGS:
-       a. Validación temporal con TimeSeriesSplit (train=pasado, val=futuro)
-       b. Adestramento final sobre todo o train
-  5. Combinación dos modelos finais con catboost.sum_models
+  1. Preprocesado con preprocesar_datos() sen OHE → categóricas nativas CatBoost
+  2. Selección das mellores N variables (N en 11..17) por importancia CatBoost + CV
+  3. Validación temporal con TimeSeriesSplit(gap=G):
+       · train = rexistros máis antigos  |  val = rexistros máis recentes
+       · o parámetro 'gap' exclúe G rexistros entre train e val para evitar
+         que solicitudes moi próximas no tempo contaminen a validación
+       · isto é máis realista que TimeSeriesSplit puro para proxectar ao futuro
+  4. auto_class_weights='Balanced' en todos os modelos
+  5. Adestramento de varios CatBoost (via crear_catboost) + combinación con sum_models
 """
+
+import sys, os
+sys.path.insert(0, os.path.dirname(__file__))   # para importar os módulos locais
 
 import pandas as pd
 import numpy as np
@@ -22,203 +26,231 @@ from sklearn.metrics import f1_score
 import warnings
 warnings.filterwarnings('ignore')
 
-# ── 0. Configuración ─────────────────────────────────────────────────────────
-SEED       = 777
-CV_FOLDS   = 5
-N_FEATURES = 17
-RUTA_TRAIN = './data/train.csv'
-RUTA_TEST  = './data/test.csv'
+from funciones.preprocesado2x2 import preprocesar_datos
+from funciones.modelado2x2 import crear_catboost
 
-# Modelos que se van a validar E despois combinar con sum_models.
-# A diversidade conséguese variando semente, profundidade e learning rate.
+# ── 0. Configuración ─────────────────────────────────────────────────────────
+SEED         = 777
+CV_FOLDS     = 5
+# Gap en nº de rexistros entre o último exemplo de train e o primeiro de val.
+# Con ~18 000 rexistros e 3 anos de datos, ~250 filas ≈ 1 mes de marxe.
+CV_GAP       = 250
+N_MIN        = 11
+N_MAX        = 17
+RUTA_TRAIN   = './data/train.csv'
+RUTA_TEST    = './data/test.csv'
+
+# Modelos que se validarán E combinarán con sum_models.
+# Diversidade por semente, profundidade, lr e l2 para que o ensemble gañe robustez.
 CONFIGS = [
-    dict(iterations=1200, learning_rate=0.03, depth=7, random_seed=777),
-    dict(iterations=1200, learning_rate=0.03, depth=7, random_seed=42),
-    dict(iterations=1000, learning_rate=0.04, depth=8, random_seed=123),
-    dict(iterations=1000, learning_rate=0.04, depth=6, random_seed=999),
-    dict(iterations=1400, learning_rate=0.02, depth=7, random_seed=2024),
+    dict(seed=777,  depth=7, iterations=1200, lr=0.03, l2=3.0,  balance='Balanced'),
+    dict(seed=42,   depth=7, iterations=1200, lr=0.03, l2=3.0,  balance='Balanced'),
+    dict(seed=123,  depth=8, iterations=1000, lr=0.04, l2=1.0,  balance='Balanced'),
+    dict(seed=999,  depth=6, iterations=1000, lr=0.04, l2=5.0,  balance='Balanced'),
+    dict(seed=2024, depth=7, iterations=1400, lr=0.02, l2=3.0,  balance='Balanced'),
 ]
 
-PARAMS_COMUNS = dict(
-    loss_function='MultiClass',
-    eval_metric='TotalF1',
-    auto_class_weights='Balanced',
-    verbose=0,
-    thread_count=-1,
-)
-
 # ── 1. Carga de datos ────────────────────────────────────────────────────────
-print("=" * 60)
+print("=" * 62)
 print("  CARGA DE DATOS")
-print("=" * 60)
-train = pd.read_csv(RUTA_TRAIN)
-test  = pd.read_csv(RUTA_TEST)
-print(f"  Train bruto : {train.shape[0]} filas · {train.shape[1]} columnas")
-print(f"  Test  bruto : {test.shape[0]} filas · {test.shape[1]} columnas\n")
+print("=" * 62)
+train_raw = pd.read_csv(RUTA_TRAIN)
+test_raw  = pd.read_csv(RUTA_TEST)
+print(f"  Train bruto : {train_raw.shape[0]} filas · {train_raw.shape[1]} columnas")
+print(f"  Test  bruto : {test_raw.shape[0]} filas · {test_raw.shape[1]} columnas\n")
+
+# Gardamos as datas ANTES do preprocesado para ordear e facer o split temporal.
+# A data NON se usa como feature en ningún momento.
+train_raw['Data_Solicitude'] = pd.to_datetime(train_raw['Data_Solicitude'])
+test_raw['Data_Solicitude']  = pd.to_datetime(test_raw['Data_Solicitude'])
+train_raw = train_raw.sort_values('Data_Solicitude').reset_index(drop=True)
+ids_test  = test_raw['ID_Cliente'].copy()
+
+print(f"  Rango temporal train : {train_raw['Data_Solicitude'].min().date()}  →  "
+      f"{train_raw['Data_Solicitude'].max().date()}\n")
 
 # ── 2. Preprocesado ──────────────────────────────────────────────────────────
-print("=" * 60)
-print("  PREPROCESADO")
-print("=" * 60)
+print("=" * 62)
+print("  PREPROCESADO  (sen OHE → categóricas nativas CatBoost)")
+print("=" * 62)
 
-n_antes = len(train)
-train = train.drop_duplicates(keep='first').reset_index(drop=True)
-print(f"  Duplicados eliminados : {n_antes - len(train)}")
-
-train['Data_Solicitude'] = pd.to_datetime(train['Data_Solicitude'])
-test['Data_Solicitude']  = pd.to_datetime(test['Data_Solicitude'])
-train = train.sort_values('Data_Solicitude').reset_index(drop=True)
-print(f"  Rango temporal train  : {train['Data_Solicitude'].min().date()}  →  "
-      f"{train['Data_Solicitude'].max().date()}")
-
-y_train     = train['Target_Risco'].copy()
-ids_test    = test['ID_Cliente'].copy()
-dates_train = train['Data_Solicitude'].copy()  # só para splits temporais, non como feature
-
-X_raw = train.drop(columns=['ID_Cliente', 'Data_Solicitude', 'Target_Risco'])
-T_raw = test.drop(columns=['ID_Cliente', 'Data_Solicitude'])
-
-print("  Imputando NaN...")
-for col in X_raw.columns:
-    if X_raw[col].dtype == object:
-        fill = X_raw[col].mode()[0]
-    else:
-        fill = X_raw[col].median()
-    X_raw[col] = X_raw[col].fillna(fill)
-    T_raw[col] = T_raw[col].fillna(fill)
-
-# ── 3. One-Hot Encoding ───────────────────────────────────────────────────────
-# Variables convertidas a OHE e razón:
-#   Profesion        → categorías nominais sen orde
-#   Tipo_Dispositivo → SO sen relación de magnitude entre valores
-#   Dia_Solicitude   → día da semana con nomes, sen orde cardinal
-#   Codigo_Postal    → código xeográfico; só 13 valores únicos;
-#                      a diferenza aritmética entre códigos non ten significado
-# Mantéñense numéricas:
-#   Subscricion_Email, Historial_Impagos → binarios 0/1
-#   Num_Fillos, Numero_Tarxetas, Prestamos_Activos, Consultas_Risco_6M → conteos
-OHE_COLS = ['Profesion', 'Tipo_Dispositivo', 'Dia_Solicitude', 'Codigo_Postal']
-
-print(f"\n  Aplicando OHE a: {OHE_COLS}")
-for col in OHE_COLS:
-    X_raw[col] = col + '_' + X_raw[col].astype(str)
-    T_raw[col] = col + '_' + T_raw[col].astype(str)
-
-X_enc = pd.get_dummies(X_raw, columns=OHE_COLS, dtype=int)
-T_enc = pd.get_dummies(T_raw, columns=OHE_COLS, dtype=int)
-X_enc, T_enc = X_enc.align(T_enc, join='left', axis=1, fill_value=0)
-
-print(f"  Variables tras OHE  : {X_enc.shape[1]}")
-print(f"  Train final         : {X_enc.shape}\n")
-
-# ── 4. Selección das top-{N_FEATURES} variables (importancia CatBoost) ───────
-print("=" * 60)
-print(f"  SELECCIÓN DE VARIABLES  (top-{N_FEATURES} por importancia CatBoost)")
-print("=" * 60)
-
-aux_model = CatBoostClassifier(
-    iterations=400, learning_rate=0.08, depth=6,
-    loss_function='MultiClass', eval_metric='TotalF1',
-    auto_class_weights='Balanced', random_seed=SEED,
-    verbose=0, thread_count=-1,
+X_all, X_test, y_train, CATEGORICAS = preprocesar_datos(
+    train_raw, test_raw, usar_ohe=False
 )
-aux_model.fit(Pool(X_enc, label=y_train))
 
-importances = pd.Series(
-    aux_model.get_feature_importance(Pool(X_enc, label=y_train)),
-    index=X_enc.columns
+# Índices de columna das categóricas (necesarios para Pool de CatBoost)
+cols_list  = X_all.columns.tolist()
+cat_idx_all = [cols_list.index(c) for c in CATEGORICAS if c in cols_list]
+
+# Gardar as datas aliñadas co índice do train despois de drop_duplicates
+# (preprocesar_datos fai reset_index internamente; realiñamos pola orde)
+dates_train = train_raw.loc[X_all.index, 'Data_Solicitude'].reset_index(drop=True)
+X_all = X_all.reset_index(drop=True)
+y_train = y_train.reset_index(drop=True)
+
+print(f"\n  Categóricas que usará CatBoost de forma nativa : {CATEGORICAS}\n")
+
+# ── 3. Selección do mellor N (11 → 17) ───────────────────────────────────────
+# Paso 3a: modelo auxiliar sobre TODAS as variables para obter o ranking
+print("=" * 62)
+print(f"  SELECCIÓN DE VARIABLES  (N de {N_MIN} a {N_MAX})")
+print("=" * 62)
+
+print("\n  3a. Calculando importancias con modelo auxiliar...")
+aux = crear_catboost(seed=SEED, depth=6, iterations=400, lr=0.08, l2=3.0,
+                     balance='Balanced')
+aux.fit(Pool(X_all, label=y_train, cat_features=cat_idx_all))
+
+importancias = pd.Series(
+    aux.get_feature_importance(Pool(X_all, label=y_train, cat_features=cat_idx_all)),
+    index=X_all.columns
 ).sort_values(ascending=False)
 
-FEATURES = importances.index[:N_FEATURES].tolist()
-print(f"\n  Top-{N_FEATURES} variables:")
-for i, feat in enumerate(FEATURES, 1):
-    print(f"    {i:>2}. {feat:<42}  imp: {importances[feat]:.4f}")
-print()
+print(f"\n  Ranking completo de variables:")
+for i, (feat, imp) in enumerate(importancias.items(), 1):
+    print(f"    {i:>2}. {feat:<38}  {imp:.4f}")
 
-X = X_enc[FEATURES].copy()
-T = T_enc[FEATURES].copy()
+RANKING = importancias.index.tolist()
 
-# ── 5. Validación + adestramento final de cada modelo ────────────────────────
-# Para cada configuración:
-#   a) Validación temporal con TimeSeriesSplit: mide o F1-macro real
-#      (sempre trainando co pasado e validando co futuro)
+# Paso 3b: CV temporal para cada N, co mesmo TimeSeriesSplit(gap=CV_GAP)
+# O gap evita que rexistros moi próximos no tempo entre train e val
+# produzan un optimismo artificial na métrica.
+print(f"\n  3b. CV temporal por N  (TimeSeriesSplit · folds={CV_FOLDS} · gap={CV_GAP})")
+print(f"  {'N':>3}   F1-macro medio   std")
+print(f"  {'-'*35}")
+
+tscv = TimeSeriesSplit(n_splits=CV_FOLDS, gap=CV_GAP)
+resultados_n = {}
+
+for n in range(N_MIN, N_MAX + 1):
+    feats_n  = RANKING[:n]
+    cats_n   = [c for c in CATEGORICAS if c in feats_n]
+    cat_idx_n = [feats_n.index(c) for c in cats_n]
+
+    f1s = []
+    for idx_tr, idx_val in tscv.split(X_all):
+        Xtr, ytr   = X_all[feats_n].iloc[idx_tr],  y_train.iloc[idx_tr]
+        Xval, yval = X_all[feats_n].iloc[idx_val], y_train.iloc[idx_val]
+
+        m = crear_catboost(seed=SEED, depth=7, iterations=600, lr=0.05,
+                           l2=3.0, balance='Balanced')
+        m.fit(
+            Pool(Xtr, label=ytr, cat_features=cat_idx_n),
+            eval_set=Pool(Xval, label=yval, cat_features=cat_idx_n),
+        )
+        preds = m.predict(Xval).ravel().astype(int)
+        f1s.append(f1_score(yval, preds, average='macro'))
+
+    media, std = float(np.mean(f1s)), float(np.std(f1s))
+    resultados_n[n] = media
+    print(f"  N={n:>2}   {media:.5f}          {std:.5f}")
+
+BEST_N = max(resultados_n, key=resultados_n.get)
+BEST_FEATS = RANKING[:BEST_N]
+cats_best  = [c for c in CATEGORICAS if c in BEST_FEATS]
+cat_idx_best = [BEST_FEATS.index(c) for c in cats_best]
+
+print(f"\n  ✔  Mellor N = {BEST_N}  →  F1-macro CV = {resultados_n[BEST_N]:.5f}")
+print(f"  Variables seleccionadas:")
+for i, f in enumerate(BEST_FEATS, 1):
+    print(f"    {i:>2}. {f}")
+
+X = X_all[BEST_FEATS].copy()
+T = X_test[BEST_FEATS].copy()
+
+# ── 4. Validación temporal + adestramento final de cada modelo ────────────────
+# Para cada config en CONFIGS:
+#   a) CV temporal con TimeSeriesSplit(gap=CV_GAP) → F1-macro real
 #   b) Adestramento final sobre todo o train co mesmo config
-# Desta forma o que se valida e o que se combina son exactamente o mesmo.
-print("=" * 60)
-print(f"  VALIDACIÓN TEMPORAL + ADESTRAMENTO FINAL")
-print(f"  ({len(CONFIGS)} modelos · TimeSeriesSplit · {CV_FOLDS} folds)")
-print("=" * 60)
+# O que se valida e o que se combina son exactamente os mesmos modelos.
+print("\n" + "=" * 62)
+print(f"  VALIDACIÓN + ADESTRAMENTO FINAL")
+print(f"  ({len(CONFIGS)} configs · TimeSeriesSplit · folds={CV_FOLDS} · gap={CV_GAP})")
+print("=" * 62)
 
-tscv      = TimeSeriesSplit(n_splits=CV_FOLDS)
-full_pool = Pool(X, label=y_train)
-modelos   = []
-f1_por_config = []
+full_pool   = Pool(X, label=y_train, cat_features=cat_idx_best)
+modelos     = []
+f1_configs  = []
 
 for i, cfg in enumerate(CONFIGS, 1):
-    desc = (f"iter={cfg['iterations']}, lr={cfg['learning_rate']}, "
-            f"depth={cfg['depth']}, seed={cfg['random_seed']}")
+    desc = (f"seed={cfg['seed']}, depth={cfg['depth']}, "
+            f"iter={cfg['iterations']}, lr={cfg['lr']}, l2={cfg['l2']}")
     print(f"\n  ── Modelo {i}/{len(CONFIGS)}  ({desc})")
 
     # a) Validación temporal
-    f1_folds = []
+    f1s = []
     for fold, (idx_tr, idx_val) in enumerate(tscv.split(X), 1):
-        X_tr, y_tr   = X.iloc[idx_tr],  y_train.iloc[idx_tr]
-        X_val, y_val = X.iloc[idx_val], y_train.iloc[idx_val]
+        Xtr, ytr   = X.iloc[idx_tr],  y_train.iloc[idx_tr]
+        Xval, yval = X.iloc[idx_val], y_train.iloc[idx_val]
 
-        date_tr_max  = dates_train.iloc[idx_tr].max().date()
-        date_val_min = dates_train.iloc[idx_val].min().date()
+        d_tr_max  = dates_train.iloc[idx_tr].max().date()
+        d_val_min = dates_train.iloc[idx_val].min().date()
 
-        m_cv = CatBoostClassifier(**cfg, **PARAMS_COMUNS, early_stopping_rounds=50)
-        m_cv.fit(Pool(X_tr, label=y_tr), eval_set=Pool(X_val, label=y_val))
+        m_cv = crear_catboost(**cfg)
+        m_cv.fit(
+            Pool(Xtr, label=ytr, cat_features=cat_idx_best),
+            eval_set=Pool(Xval, label=yval, cat_features=cat_idx_best),
+        )
+        preds = m_cv.predict(Xval).ravel().astype(int)
+        f1    = f1_score(yval, preds, average='macro')
+        f1s.append(f1)
+        print(f"    Fold {fold}  |  train ≤ {d_tr_max}  |  "
+              f"val ≥ {d_val_min}  |  F1 = {f1:.5f}")
 
-        preds = m_cv.predict(X_val).ravel().astype(int)
-        f1    = f1_score(y_val, preds, average='macro')
-        f1_folds.append(f1)
-        print(f"    Fold {fold}  |  train ≤ {date_tr_max}  |  "
-              f"val ≥ {date_val_min}  |  F1-macro = {f1:.5f}")
+    f1_medio = float(np.mean(f1s))
+    f1_configs.append(f1_medio)
+    print(f"    → F1-macro medio : {f1_medio:.5f}  (std: {np.std(f1s):.5f})")
 
-    f1_medio = float(np.mean(f1_folds))
-    f1_por_config.append(f1_medio)
-    print(f"    → F1-macro medio : {f1_medio:.5f}  (std: {np.std(f1_folds):.5f})")
-
-    # b) Adestramento final sobre todo o train (mesmo config, sen early stopping)
-    print(f"    Adestramento final sobre train completo...", end=' ', flush=True)
-    m_final = CatBoostClassifier(**cfg, **PARAMS_COMUNS)
+    # b) Adestramento final (mesmo config, sen early stopping, train completo)
+    print(f"    Adestramento final...", end=' ', flush=True)
+    # Para o adestramento final eliminamos early_stopping para usar tódalas iteracións
+    m_final = CatBoostClassifier(
+        iterations=cfg['iterations'],
+        learning_rate=cfg['lr'],
+        depth=cfg['depth'],
+        l2_leaf_reg=cfg['l2'],
+        auto_class_weights=cfg['balance'],
+        random_seed=cfg['seed'],
+        verbose=0,
+    )
     m_final.fit(full_pool)
     modelos.append(m_final)
     print("listo.")
 
-# Resumo da validación
-print(f"\n{'─' * 60}")
+# Resumo
+print(f"\n{'─' * 62}")
 print("  RESUMO DE VALIDACIÓN:")
-for i, (cfg, f1) in enumerate(zip(CONFIGS, f1_por_config), 1):
-    print(f"    Modelo {i}  (seed={cfg['random_seed']}, depth={cfg['depth']})  "
-          f"→  F1-macro CV = {f1:.5f}")
-print(f"    Media xeral : {np.mean(f1_por_config):.5f}")
-print(f"{'─' * 60}\n")
+for i, (cfg, f1) in enumerate(zip(CONFIGS, f1_configs), 1):
+    print(f"    Modelo {i}  (seed={cfg['seed']}, depth={cfg['depth']}, "
+          f"lr={cfg['lr']})  →  {f1:.5f}")
+print(f"    Media xeral : {np.mean(f1_configs):.5f}")
+print(f"{'─' * 62}\n")
 
-# ── 6. Combinación con sum_models ────────────────────────────────────────────
-print("=" * 60)
+# ── 5. Combinación con sum_models ────────────────────────────────────────────
+print("=" * 62)
 print(f"  COMBINACIÓN  (sum_models · {len(modelos)} modelos · pesos uniformes)")
-print("=" * 60)
+print("=" * 62)
 
 pesos        = [1.0 / len(modelos)] * len(modelos)
 modelo_final = sum_models(modelos, weights=pesos)
 print("  Combinación completada.\n")
 
-# ── 7. Predición e arquivo de envío ──────────────────────────────────────────
-print("=" * 60)
+# ── 6. Predición e arquivo de envío ──────────────────────────────────────────
+print("=" * 62)
 print("  PREDICIÓN E EXPORTACIÓN")
-print("=" * 60)
+print("=" * 62)
 
-preds_test = modelo_final.predict_proba(Pool(T)).argmax(axis=1).astype(int)
+preds_test = modelo_final.predict(
+    Pool(T, cat_features=cat_idx_best),
+    prediction_type='Probability'
+).argmax(axis=1).astype(int)
 
 submission = pd.DataFrame({
     'ID_Cliente':   ids_test,
     'Target_Risco': preds_test,
 })
 
-nome_arquivo = f'./resultados/27-04-2026_catboost_summodels_top{N_FEATURES}.csv'
+nome_arquivo = f'./resultados/27-04-2026_2_catboost_sum_features{BEST_N}.csv'
 submission.to_csv(nome_arquivo, index=False)
 
 print(f"  Arquivo xerado : {nome_arquivo}  ({len(submission)} filas)")
