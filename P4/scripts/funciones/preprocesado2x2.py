@@ -7,10 +7,19 @@ import numpy as np
 MALARDAS = ['ID_Cliente', 'Lonxitude_Nome', 'Tempo_Web_Minutos', 'Subscricion_Email']
 
 # Variables categóricas que non teñen sentido matemático (falso continuo)
-CATEGORICAS = ['Profesion', 'Tipo_Dispositivo', 'Dia_Solicitude', 'Codigo_Postal']
+CATEGORICAS = ['Profesion', 'Tipo_Dispositivo', 'Dia_Solicitude', 'Codigo_Postal', 'Mes_Solicitude']
 
 def crear_features(df_input):
     df = df_input.copy()
+
+
+    # Asegurarnos de que a data é tipo datetime
+    if not pd.api.types.is_datetime64_any_dtype(df['Data_Solicitude']):
+        df['Data_Solicitude'] = pd.to_datetime(df['Data_Solicitude'])
+
+    df['Mes_Solicitude'] = df['Data_Solicitude'].dt.month
+
+
     eps = 0.1
     
     df['ratio_debeda_ingresos'] = (
